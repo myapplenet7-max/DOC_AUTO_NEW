@@ -386,7 +386,7 @@ function RechargePage() {
             <div className="w-16 h-16 bg-white rounded-xl border border-slate-200 flex items-center justify-center text-3xl">📱</div>
             <div>
               <div className="text-xs text-slate-500 mb-1">UPI ID</div>
-              <div className="font-mono font-bold text-slate-900">docauto@upi</div>
+              <div className="font-mono font-bold text-slate-900">9014860890@kotak811</div>
               <div className="text-xs text-slate-400 mt-1">Pay, then upload screenshot below</div>
             </div>
           </div>
