@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
 from database import get_db
-from auth_utils import require_admin, get_user_from_token_string
+from auth_utils import require_admin, get_current_user
 import models, schemas, os
 from services.whatsapp_service import notify_user_payment_approved, notify_user_payment_rejected
 
