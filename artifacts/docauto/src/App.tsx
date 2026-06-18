@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { useState, useEffect, createContext, useContext } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import AdminPage from "./AdminPage";
 
 const AuthContext = createContext(null);
@@ -236,6 +237,20 @@ function AuthPage() {
             )}
           </div>
         </Card>
+
+        {/* Admin quick-login */}
+        {mode === "signin" && (
+          <button
+            onClick={() => {
+              setForm(f => ({ ...f, mobile: "9999999999", password: "Admin@123" }));
+              setErrors({}); setGlobalError("");
+            }}
+            className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-purple-300 text-sm font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 hover:border-purple-400 active:scale-98 transition-all"
+          >
+            🛡️ Admin Login
+          </button>
+        )}
+
         <p className="text-center text-xs text-slate-400 mt-4">PAN Forms · Sale Deeds · Registration Documents · AP/Telangana</p>
       </div>
     </div>
@@ -805,24 +820,40 @@ function RechargePage() {
       <div className="mb-6">
         <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Step 2 — Pay via UPI</div>
         <Card className="p-5">
-          <div className="flex items-center gap-4 mb-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
-            <div className="w-14 h-14 bg-white rounded-xl border border-slate-200 flex items-center justify-center text-3xl shadow-sm shrink-0">📱</div>
-            <div className="flex-1 min-w-0">
-              <div className="text-xs text-slate-500 font-medium mb-1">UPI ID</div>
-              <div className="font-mono font-bold text-slate-900 text-sm break-all">{UPI_ID}</div>
-              <button onClick={copyUpi} className="text-xs text-indigo-600 hover:underline mt-1">
+          {/* QR Code + UPI ID side by side */}
+          <div className="flex flex-col sm:flex-row items-center gap-5 mb-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+            <div className="shrink-0 p-2 bg-white rounded-xl border border-slate-200 shadow-sm">
+              <QRCodeSVG
+                value={`upi://pay?pa=${UPI_ID}&pn=DocAuto&cu=INR${selected ? `&am=${selected.amount}` : ""}`}
+                size={140}
+                bgColor="#ffffff"
+                fgColor="#1e1b4b"
+                level="M"
+                includeMargin={false}
+              />
+            </div>
+            <div className="flex-1 min-w-0 text-center sm:text-left">
+              <div className="text-xs text-slate-500 font-semibold uppercase tracking-wide mb-1">Scan QR or pay to UPI ID</div>
+              <div className="font-mono font-bold text-slate-900 text-base break-all">{UPI_ID}</div>
+              <button onClick={copyUpi} className="text-sm text-indigo-600 hover:underline mt-2 inline-flex items-center gap-1">
                 {upiCopied ? "✅ Copied!" : "📋 Copy UPI ID"}
               </button>
+              <div className="mt-3 text-xs text-slate-400 flex flex-wrap gap-1 justify-center sm:justify-start">
+                <span className="bg-white border border-slate-200 px-2 py-1 rounded-lg">Google Pay</span>
+                <span className="bg-white border border-slate-200 px-2 py-1 rounded-lg">PhonePe</span>
+                <span className="bg-white border border-slate-200 px-2 py-1 rounded-lg">Paytm</span>
+                <span className="bg-white border border-slate-200 px-2 py-1 rounded-lg">BHIM</span>
+              </div>
             </div>
           </div>
           {selected && (
-            <div className="bg-indigo-50 rounded-xl px-4 py-3 mb-4 flex justify-between items-center border border-indigo-200">
-              <span className="text-sm text-indigo-700 font-semibold">Selected: {selected.credits} credits</span>
-              <span className="text-lg font-black text-indigo-900">₹{selected.amount}</span>
+            <div className="bg-indigo-50 rounded-xl px-4 py-3 mb-1 flex justify-between items-center border border-indigo-200">
+              <span className="text-sm text-indigo-700 font-semibold">Pay exactly: {selected.credits} credits</span>
+              <span className="text-xl font-black text-indigo-900">₹{selected.amount}</span>
             </div>
           )}
           {!selected && (
-            <Alert type="info" className="mb-4">Select a credit pack above first.</Alert>
+            <Alert type="info">Select a credit pack above to generate the exact payment QR code.</Alert>
           )}
         </Card>
       </div>
