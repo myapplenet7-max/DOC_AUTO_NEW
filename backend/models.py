@@ -63,6 +63,7 @@ class Document(Base):
     doc_type          = Column(String, nullable=True)
     extracted_fields  = Column(Text,   nullable=True)
     template_content  = Column(Text,   nullable=True)
+    template_path     = Column(String, nullable=True)
     output_path       = Column(String, nullable=True)
     pdf_output_path   = Column(String, nullable=True)
     credits_used      = Column(Integer, default=1)

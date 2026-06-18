@@ -40,6 +40,7 @@ class DocumentOut(BaseModel):
     doc_type: Optional[str]
     extracted_fields: Optional[str]
     template_content: Optional[str]
+    template_path: Optional[str]
     output_path: Optional[str]
     pdf_output_path: Optional[str]
     credits_used: int

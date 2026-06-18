@@ -1,6 +1,6 @@
-import os, json, shutil
+import os, json, shutil, base64
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, Body
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from auth_utils import get_current_user, get_user_from_token_string
@@ -9,13 +9,31 @@ from models import DOC_COST_CREDITS
 from services.ocr_service import extract_text, detect_fields, detect_placeholders, generate_template_from_text
 from services.docx_service import generate_docx
 from services.template_service import build_field_schema, generate_filled_docx
+from services.format_service import (
+    create_template_from_docx,
+    fill_template_docx,
+    docx_to_preview_html,
+    highlight_placeholders_html,
+    get_placeholder_keys_from_docx,
+    pdf_to_preview_images,
+    image_to_preview_html,
+)
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/tmp/docauto_uploads")
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/tmp/docauto_outputs")
+PREVIEW_DIR = os.environ.get("PREVIEW_DIR", "/tmp/docauto_previews")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(PREVIEW_DIR, exist_ok=True)
 
 router = APIRouter()
+
+DOCX_EXTS = {".docx", ".doc"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+
+
+def _ext(path: str) -> str:
+    return os.path.splitext(path)[1].lower()
 
 
 @router.post("/upload", response_model=schemas.DocumentOut)
@@ -59,17 +77,21 @@ def get_placeholders(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Return AI-detected placeholder suggestions for user review."""
     doc = db.query(models.Document).filter(
         models.Document.id == doc_id, models.Document.user_id == current_user.id
     ).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-
     fields = json.loads(doc.extracted_fields or "{}")
     raw_text = fields.get("raw_text", "")
     placeholders = detect_placeholders(raw_text, fields)
-    return {"doc_id": doc_id, "placeholders": placeholders, "raw_text": raw_text}
+    is_docx = _ext(doc.file_path) in DOCX_EXTS
+    return {
+        "doc_id": doc_id,
+        "placeholders": placeholders,
+        "raw_text": raw_text,
+        "source_is_docx": is_docx,
+    }
 
 
 @router.post("/{doc_id}/approve-placeholders")
@@ -79,7 +101,6 @@ def approve_placeholders(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """After user reviews placeholders, generate template content and save it."""
     doc = db.query(models.Document).filter(
         models.Document.id == doc_id, models.Document.user_id == current_user.id
     ).first()
@@ -90,16 +111,144 @@ def approve_placeholders(
     raw_text = fields.get("raw_text", "")
     approved = [p for p in data.approved_placeholders if p.get("approved")]
 
+    # ── Format-preserving path: DOCX source ──────────────────────────────────
+    ext = _ext(doc.file_path)
+    template_path = None
+
+    if ext in DOCX_EXTS and approved:
+        detected_values = {p["key"]: p["value"] for p in approved}
+        template_path = os.path.join(OUTPUT_DIR, f"doc_{doc_id}_template.docx")
+        try:
+            create_template_from_docx(doc.file_path, detected_values, template_path)
+        except Exception as e:
+            template_path = None
+
+    # Text-based template (always generated as fallback / for non-DOCX)
     template_content = generate_template_from_text(raw_text, approved)
     doc.template_content = template_content
+    if template_path:
+        doc.template_path = template_path
     db.commit(); db.refresh(doc)
 
     return {
         "doc_id": doc_id,
         "template_content": template_content,
+        "has_format_preserved_template": template_path is not None,
         "placeholder_count": len(approved),
     }
 
+
+# ── Preview endpoints ─────────────────────────────────────────────────────────
+
+@router.get("/{doc_id}/preview-original")
+def preview_original(
+    doc_id: int,
+    token: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Return HTML preview of the original uploaded document."""
+    current_user = get_user_from_token_string(token, db)
+    doc = db.query(models.Document).filter(
+        models.Document.id == doc_id, models.Document.user_id == current_user.id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    ext = _ext(doc.file_path)
+    if ext in DOCX_EXTS:
+        html = docx_to_preview_html(doc.file_path)
+    elif ext == ".pdf":
+        preview_subdir = os.path.join(PREVIEW_DIR, f"doc_{doc_id}_orig")
+        imgs = pdf_to_preview_images(doc.file_path, preview_subdir)
+        if imgs:
+            html = "\n".join(image_to_preview_html(p) for p in imgs)
+            html = f'<div style="background:#f8fafc;padding:16px;">{html}</div>'
+        else:
+            fields = json.loads(doc.extracted_fields or "{}")
+            raw = fields.get("raw_text", "(No text extracted)")
+            html = f'<pre style="white-space:pre-wrap;font-family:sans-serif;padding:16px;font-size:13px;">{raw}</pre>'
+    elif ext in IMAGE_EXTS:
+        html = image_to_preview_html(doc.file_path)
+    else:
+        fields = json.loads(doc.extracted_fields or "{}")
+        raw = fields.get("raw_text", "(No text extracted)")
+        html = f'<pre style="white-space:pre-wrap;font-family:sans-serif;padding:16px;">{raw}</pre>'
+
+    return HTMLResponse(content=html)
+
+
+@router.get("/{doc_id}/preview-template")
+def preview_template(
+    doc_id: int,
+    token: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Return HTML preview of the template (placeholders highlighted)."""
+    current_user = get_user_from_token_string(token, db)
+    doc = db.query(models.Document).filter(
+        models.Document.id == doc_id, models.Document.user_id == current_user.id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Use format-preserved template DOCX if available
+    if doc.template_path and os.path.exists(doc.template_path):
+        html = highlight_placeholders_html(doc.template_path)
+    elif doc.template_content:
+        import html as html_module
+        escaped = html_module.escape(doc.template_content)
+        highlighted = _highlight_placeholders_in_text(escaped)
+        html = f"""
+<style>
+  .tmpl-preview {{ font-family:'Nirmala UI',Arial,sans-serif;font-size:13px;line-height:1.8;
+    padding:24px 32px;max-width:680px;margin:0 auto;white-space:pre-wrap; }}
+  mark.ph {{ background:#dbeafe;color:#1e40af;border:1px solid #93c5fd;
+    border-radius:4px;padding:1px 4px;font-weight:600;font-size:0.85em; }}
+</style>
+<div class="tmpl-preview">{highlighted}</div>"""
+    else:
+        html = "<div style='padding:24px;color:#94a3b8;'>No template generated yet. Complete the placeholder review step first.</div>"
+
+    return HTMLResponse(content=html)
+
+
+@router.get("/{doc_id}/preview-output")
+def preview_output(
+    doc_id: int,
+    token: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Return HTML preview of the generated output document."""
+    current_user = get_user_from_token_string(token, db)
+    doc = db.query(models.Document).filter(
+        models.Document.id == doc_id, models.Document.user_id == current_user.id
+    ).first()
+    if not doc or not doc.output_path:
+        raise HTTPException(status_code=404, detail="Output not generated yet")
+
+    ext = _ext(doc.output_path)
+    if ext in DOCX_EXTS:
+        html = docx_to_preview_html(doc.output_path)
+    else:
+        html = "<div style='padding:24px;'>Output preview not available.</div>"
+
+    return HTMLResponse(content=html)
+
+
+def _highlight_placeholders_in_text(escaped_text: str) -> str:
+    """Replace escaped {{PLACEHOLDER}} with highlighted HTML."""
+    return re.sub(
+        r'\{\{([A-Z0-9_]+)\}\}',
+        lambda m: (
+            f'<mark class="ph">{{{{{m.group(1)}}}}}</mark>'
+        ),
+        escaped_text
+    )
+
+import re
+
+
+# ── Field / template update endpoints ────────────────────────────────────────
 
 @router.put("/{doc_id}/fields", response_model=schemas.DocumentOut)
 def update_fields(
@@ -119,7 +268,8 @@ def update_fields(
 
 @router.post("/{doc_id}/generate", response_model=schemas.DocumentOut)
 def generate_document(
-    doc_id: int, db: Session = Depends(get_db),
+    doc_id: int,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
     doc = db.query(models.Document).filter(
@@ -127,10 +277,26 @@ def generate_document(
     ).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    fields      = json.loads(doc.extracted_fields or "{}")
+
+    fields = json.loads(doc.extracted_fields or "{}")
     output_path = os.path.join(OUTPUT_DIR, f"doc_{doc_id}.docx")
-    generate_docx(fields, output_path)
-    doc.output_path = output_path; doc.status = "downloaded"
+
+    # ── Format-preserving path ────────────────────────────────────────────────
+    if doc.template_path and os.path.exists(doc.template_path):
+        # Get keys from the format-preserved template
+        keys = get_placeholder_keys_from_docx(doc.template_path)
+        fill_values = {}
+        for key in keys:
+            field_key = key.lower()
+            value = fields.get(field_key, "")
+            fill_values[key] = value
+        fill_template_docx(doc.template_path, fill_values, output_path)
+    else:
+        # Fallback: generate from scratch (existing behavior)
+        generate_docx(fields, output_path)
+
+    doc.output_path = output_path
+    doc.status = "downloaded"
     db.commit(); db.refresh(doc)
     return doc
 
@@ -142,7 +308,6 @@ def save_as_template(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Save the reviewed template to the template library."""
     doc = db.query(models.Document).filter(
         models.Document.id == doc_id, models.Document.user_id == current_user.id
     ).first()
@@ -151,7 +316,7 @@ def save_as_template(
 
     template_content = doc.template_content or body.get("template_content", "")
     if not template_content:
-        raise HTTPException(status_code=400, detail="No template content found. Please approve placeholders first.")
+        raise HTTPException(status_code=400, detail="No template content. Complete placeholder review first.")
 
     name        = body.get("name", doc.original_filename)
     category    = body.get("category", "Custom Templates")
@@ -175,7 +340,7 @@ def save_as_template(
 @router.get("/{doc_id}/download")
 def download_document(
     doc_id: int,
-    token: str = Query(..., description="JWT access token"),
+    token: str = Query(...),
     db: Session = Depends(get_db),
 ):
     current_user = get_user_from_token_string(token, db)
@@ -192,7 +357,10 @@ def download_document(
 
 
 @router.get("/", response_model=list[schemas.DocumentOut])
-def list_documents(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def list_documents(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     return db.query(models.Document).filter(
         models.Document.user_id == current_user.id
     ).order_by(models.Document.created_at.desc()).all()

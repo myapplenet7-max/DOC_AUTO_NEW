@@ -482,10 +482,85 @@ const FIELD_LABELS = {
   registration_date:   "Registration Date",
 };
 
+// ── Three-panel comparison component ────────────────────────────────────────
+function ComparisonPanel({ docId, token, showOutput = false, children }) {
+  const [activeTab, setActiveTab] = useState("form");
+  const tabs = [
+    { id: "original", label: "📄 Original" },
+    { id: "template", label: "🔵 Template" },
+    { id: "form",     label: showOutput ? "✅ Output" : "✏️ Fill Form" },
+  ];
+
+  const iframeSrc = (type) => `${API}/documents/${docId}/${type}?token=${token}`;
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Mobile tabs */}
+      <div className="flex lg:hidden bg-slate-100 rounded-xl p-1 gap-1">
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
+            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${activeTab === t.id ? "bg-white shadow text-indigo-700" : "text-slate-500"}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Three-column layout — desktop */}
+      <div className="hidden lg:grid lg:grid-cols-3 gap-3" style={{ height: "64vh" }}>
+        {/* Left — Original */}
+        <div className="flex flex-col rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+          <div className="px-3 py-2 bg-slate-700 text-white text-xs font-bold flex items-center gap-2 shrink-0">
+            <span>📄</span> Original Document
+          </div>
+          <iframe src={iframeSrc("preview-original")} className="flex-1 w-full bg-white" style={{ border: "none" }} title="Original" />
+        </div>
+
+        {/* Center — Template */}
+        <div className="flex flex-col rounded-xl border border-blue-200 overflow-hidden shadow-sm">
+          <div className="px-3 py-2 bg-blue-700 text-white text-xs font-bold flex items-center gap-2 shrink-0">
+            <span>🔵</span> Template
+            <span className="ml-auto text-blue-300 font-normal" style={{ fontSize: "10px" }}>{"{{placeholders}} highlighted"}</span>
+          </div>
+          <iframe src={iframeSrc("preview-template")} className="flex-1 w-full bg-white" style={{ border: "none" }} title="Template" />
+        </div>
+
+        {/* Right — Form or Output */}
+        <div className="flex flex-col rounded-xl border border-emerald-200 overflow-hidden shadow-sm">
+          <div className={`px-3 py-2 text-white text-xs font-bold flex items-center gap-2 shrink-0 ${showOutput ? "bg-emerald-700" : "bg-indigo-700"}`}>
+            <span>{showOutput ? "✅" : "✏️"}</span>
+            {showOutput ? "Generated Output" : "Fill In Values"}
+          </div>
+          <div className="flex-1 overflow-y-auto bg-white">
+            {showOutput
+              ? <iframe src={iframeSrc("preview-output")} className="w-full h-full" style={{ border: "none", minHeight: "100%" }} title="Output" />
+              : children
+            }
+          </div>
+        </div>
+      </div>
+
+      {/* Single-column mobile view */}
+      <div className="lg:hidden rounded-xl border overflow-hidden" style={{ height: "60vh" }}>
+        {activeTab === "original" && (
+          <iframe src={iframeSrc("preview-original")} className="w-full h-full bg-white" style={{ border: "none" }} title="Original" />
+        )}
+        {activeTab === "template" && (
+          <iframe src={iframeSrc("preview-template")} className="w-full h-full bg-white" style={{ border: "none" }} title="Template" />
+        )}
+        {activeTab === "form" && (
+          showOutput
+            ? <iframe src={iframeSrc("preview-output")} className="w-full h-full bg-white" style={{ border: "none" }} title="Output" />
+            : <div className="h-full overflow-y-auto bg-white">{children}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function UploadPage({ setPage }) {
   const { token, refreshUser, user } = useAuth();
   const isAdmin = user?.role === "admin";
-  const [step, setStep] = useState(0); // 0=upload, 1=review-placeholders, 2=edit-fields, 3=generate
+  const [step, setStep] = useState(0);
   const [file, setFile] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -502,8 +577,9 @@ function UploadPage({ setPage }) {
   const [templateName, setTemplateName] = useState("");
   const [templateCategory, setTemplateCategory] = useState("Custom Templates");
   const [templateDesc, setTemplateDesc] = useState("");
+  const [hasFormatTemplate, setHasFormatTemplate] = useState(false);
 
-  const STEPS = ["Upload", "Review AI Fields", "Edit & Fill", "Generate"];
+  const STEPS = ["Upload", "Review AI Fields", "Compare & Fill", "Download"];
 
   const upload = async () => {
     if (!file) return;
@@ -514,8 +590,6 @@ function UploadPage({ setPage }) {
       setResult(data);
       const fields = JSON.parse(data.extracted_fields || "{}");
       setEditedFields(Object.fromEntries(Object.entries(fields).filter(([k]) => k !== "raw_text")));
-
-      // Fetch placeholder suggestions
       const phData = await apiFetch(`/documents/${data.id}/placeholders`, {}, token);
       setPlaceholders(phData.placeholders || []);
       setRawText(phData.raw_text || "");
@@ -529,10 +603,11 @@ function UploadPage({ setPage }) {
   const approveAndContinue = async () => {
     setLoading(true); setError("");
     try {
-      await apiFetch(`/documents/${result.id}/approve-placeholders`, {
+      const res = await apiFetch(`/documents/${result.id}/approve-placeholders`, {
         method: "POST",
         body: JSON.stringify({ approved_placeholders: placeholders }),
       }, token);
+      setHasFormatTemplate(res.has_format_preserved_template || false);
       setStep(2);
     } catch (e) { setError(e.message); }
     setLoading(false);
@@ -566,7 +641,7 @@ function UploadPage({ setPage }) {
   const resetAll = () => {
     setStep(0); setFile(null); setResult(null); setEditedFields({});
     setPlaceholders([]); setRawText(""); setGenerated(false); setTemplateSaved(false);
-    setError(""); setShowSaveModal(false);
+    setError(""); setShowSaveModal(false); setHasFormatTemplate(false);
   };
 
   const togglePlaceholder = (idx) => {
@@ -577,18 +652,20 @@ function UploadPage({ setPage }) {
     setPlaceholders(prev => prev.map((p, i) => i === idx ? { ...p, placeholder: name.toUpperCase().replace(/\s+/g, "_") } : p));
   };
 
+  const isWideStep = step === 2 || step === 3;
+
   return (
-    <div className="max-w-2xl mx-auto">
+    <div className={isWideStep ? "w-full max-w-none" : "max-w-2xl mx-auto"}>
       <div className="mb-5">
         <h2 className="text-xl lg:text-2xl font-bold text-slate-900">Upload & Extract</h2>
-        <p className="text-slate-500 text-sm mt-1">Process Telugu/English documents with AI field detection.</p>
+        <p className="text-slate-500 text-sm mt-1">Format-preserving document automation for Telugu & English.</p>
       </div>
 
       <StepIndicator steps={STEPS} current={step} />
 
       {/* Step 0 — Upload */}
       {step === 0 && (
-        <>
+        <div className="max-w-2xl mx-auto">
           {!isAdmin && (user?.credits || 0) === 0 && (
             <Alert type="warning" className="mb-4">You have no credits. <button onClick={() => setPage("recharge")} className="font-bold underline">Buy credits</button> to process documents.</Alert>
           )}
@@ -611,7 +688,7 @@ function UploadPage({ setPage }) {
               <div>
                 <div className="font-semibold text-slate-700">Drop file here or tap to browse</div>
                 <div className="text-xs text-slate-400 mt-1">PDF · DOCX · ODT · JPG · PNG · Scanned documents</div>
-                <div className="text-xs text-indigo-500 mt-2 font-medium">Telugu & English supported</div>
+                <div className="text-xs text-indigo-500 mt-2 font-medium">Telugu & English · Format preserved</div>
               </div>
             )}
           </div>
@@ -619,14 +696,26 @@ function UploadPage({ setPage }) {
           <Button loading={loading} disabled={!file || (!isAdmin && (user?.credits || 0) === 0)} onClick={upload} className="mt-4 w-full justify-center" size="lg">
             <Icons.Ai />{isAdmin ? "Extract & Detect Fields (Free)" : "Extract & Detect Fields (1 credit)"}
           </Button>
-        </>
+          <div className="mt-5 grid grid-cols-3 gap-3 text-center">
+            {[["🔒", "Format Preserved", "DOCX layout kept intact"], ["🤖", "AI Detection", "25+ field types auto-detected"], ["🔄", "Reusable", "Save as template for future use"]].map(([icon, title, desc]) => (
+              <div key={title} className="p-3 bg-white rounded-xl border border-slate-100">
+                <div className="text-2xl mb-1">{icon}</div>
+                <div className="text-xs font-bold text-slate-700">{title}</div>
+                <div className="text-xs text-slate-400 mt-0.5">{desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Step 1 — Review AI-detected placeholders */}
       {step === 1 && (
-        <div>
+        <div className="max-w-2xl mx-auto">
           <Alert type="info" className="mb-5">
-            <strong>AI detected {placeholders.length} variable fields.</strong> Review each one below — approve or dismiss them. Approved fields become <code className="font-mono bg-indigo-100 px-1 rounded">{"{{PLACEHOLDER}}"}</code> tokens in your reusable template.
+            <strong>AI detected {placeholders.length} variable fields.</strong> Review and approve them — approved fields become <code className="font-mono bg-indigo-100 px-1 rounded">{"{{PLACEHOLDER}}"}</code> tokens in your format-preserved template.
+            {result?.file_path?.endsWith(".docx") && (
+              <div className="mt-2 text-emerald-700 font-semibold text-xs">✅ DOCX detected — full format preservation enabled (fonts, tables, margins, headers, footers)</div>
+            )}
           </Alert>
 
           {placeholders.length === 0 ? (
@@ -656,7 +745,7 @@ function UploadPage({ setPage }) {
                               />
                               <Badge color={CONFIDENCE_COLOR(ph.confidence)}>{Math.round(ph.confidence * 100)}% confidence</Badge>
                             </div>
-                            <div className="text-xs text-slate-500 mt-1 truncate">Detected value: <span className="font-medium text-slate-700">{ph.value}</span></div>
+                            <div className="text-xs text-slate-500 mt-1 truncate">Detected: <span className="font-medium text-slate-700">{ph.value}</span></div>
                           </div>
                         </div>
                       );
@@ -672,20 +761,28 @@ function UploadPage({ setPage }) {
             <Button loading={loading} onClick={approveAndContinue} variant="primary" size="lg">
               Continue with {placeholders.filter(p => p.approved).length} approved fields →
             </Button>
-            <Button variant="ghost" onClick={() => setStep(2)}>Skip template step</Button>
+            <Button variant="ghost" onClick={() => setStep(2)}>Skip to fill form</Button>
           </div>
         </div>
       )}
 
-      {/* Step 2 — Edit fields */}
+      {/* Step 2 — Three-panel: Original | Template | Fill Form */}
       {step === 2 && (
         <div>
-          <Alert type="success" className="mb-5">
-            Fields extracted from your document. Fill in any missing values, then generate your DOCX.
-          </Alert>
-          <Card className="p-5 mb-5">
-            <h3 className="font-bold text-slate-900 mb-4">Document Fields</h3>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {hasFormatTemplate && (
+            <div className="mb-3 px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-semibold flex items-center gap-2">
+              ✅ Format-preserved template created — the output will match your original document layout at 95–100% fidelity
+            </div>
+          )}
+          <div className="mb-3 text-xs text-slate-500 hidden lg:flex items-center gap-4">
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-500 inline-block"></span> Original — your uploaded file</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span> Template — <span className="text-blue-700 font-mono text-xs">{"{{PLACEHOLDERS}}"}</span> highlighted</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500 inline-block"></span> Fill in the values on the right</span>
+          </div>
+
+          <ComparisonPanel docId={result.id} token={token} showOutput={false}>
+            <div className="p-4 space-y-3">
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Document Fields</div>
               {Object.entries(FIELD_LABELS).map(([key, label]) => (
                 <div key={key}>
                   <label className="block text-xs font-semibold text-slate-500 mb-1">{label}</label>
@@ -698,40 +795,55 @@ function UploadPage({ setPage }) {
                 </div>
               ))}
             </div>
-          </Card>
-          {error && <Alert type="error" className="mb-4">{error}</Alert>}
-          <div className="flex flex-wrap gap-3">
+          </ComparisonPanel>
+
+          {error && <Alert type="error" className="mt-4">{error}</Alert>}
+          <div className="flex flex-wrap gap-3 mt-4">
             <Button loading={generating} onClick={generate} variant="success" size="lg">
-              <Icons.File /> Generate DOCX
+              <Icons.File /> Generate Format-Preserved DOCX
             </Button>
             <Button variant="ghost" onClick={() => setStep(1)}>← Back</Button>
           </div>
         </div>
       )}
 
-      {/* Step 3 — Generated */}
+      {/* Step 3 — Three-panel comparison: Original | Template | Output */}
       {step === 3 && (
         <div>
-          <div className="text-center py-8">
-            <div className="text-6xl mb-4">🎉</div>
-            <h3 className="text-xl font-bold text-slate-900 mb-2">Document Generated!</h3>
-            <p className="text-slate-500 text-sm mb-6">Your DOCX is ready to download.</p>
-          </div>
-          <div className="flex flex-wrap gap-3 justify-center mb-6">
-            <Button onClick={() => window.open(`${API}/documents/${result.id}/download?token=${token}`, "_blank")} variant="primary" size="lg">
-              <Icons.Download /> Download DOCX
-            </Button>
-            {!templateSaved && (
-              <Button onClick={() => setShowSaveModal(true)} variant="purple" size="lg">
-                <Icons.Save /> Save as Template
+          <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">🎉 Document Generated!</h3>
+              <p className="text-sm text-slate-500 mt-0.5">Compare original, template, and filled output below before downloading.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => window.open(`${API}/documents/${result.id}/download?token=${token}`, "_blank")} variant="primary">
+                <Icons.Download /> Download DOCX
               </Button>
-            )}
-            {templateSaved && <Alert type="success">Template saved to your library! <button onClick={() => setPage("templates")} className="font-bold underline ml-1">View Library</button></Alert>}
-            <Button variant="secondary" onClick={resetAll}>Process Another Document</Button>
+              {!templateSaved && (
+                <Button onClick={() => setShowSaveModal(true)} variant="purple">
+                  <Icons.Save /> Save Template
+                </Button>
+              )}
+              <Button variant="secondary" onClick={resetAll} size="sm">New Document</Button>
+            </div>
           </div>
 
+          {templateSaved && (
+            <Alert type="success" className="mb-3">
+              Template saved! <button onClick={() => setPage("templates")} className="font-bold underline ml-1">View Library</button>
+            </Alert>
+          )}
+
+          <div className="mb-3 text-xs text-slate-500 hidden lg:flex items-center gap-4">
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-500 inline-block"></span> Original document</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span> Template with placeholders</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> Generated output — verify it matches original layout</span>
+          </div>
+
+          <ComparisonPanel docId={result.id} token={token} showOutput={true} />
+
           {showSaveModal && (
-            <Card className="p-5 border-2 border-purple-200">
+            <Card className="p-5 border-2 border-purple-200 mt-4">
               <h4 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
                 <Icons.Save /> Save to Template Library
               </h4>
@@ -740,7 +852,7 @@ function UploadPage({ setPage }) {
                 <Select label="Category" value={templateCategory} onChange={e => setTemplateCategory(e.target.value)}>
                   {CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_ICONS[c]} {c}</option>)}
                 </Select>
-                <Input label="Description (optional)" value={templateDesc} onChange={e => setTemplateDesc(e.target.value)} placeholder="Brief description of this template" />
+                <Input label="Description (optional)" value={templateDesc} onChange={e => setTemplateDesc(e.target.value)} placeholder="Brief description" />
               </div>
               <div className="flex gap-3 mt-4">
                 <Button loading={savingTemplate} onClick={saveTemplate} variant="purple" disabled={!templateName.trim()}>
