@@ -241,13 +241,17 @@ function AuthPage() {
         {/* Admin quick-login */}
         {mode === "signin" && (
           <button
-            onClick={() => {
-              setForm(f => ({ ...f, mobile: "9999999999", password: "Admin@123" }));
-              setErrors({}); setGlobalError("");
+            onClick={async () => {
+              setErrors({}); setGlobalError(""); setLoading(true);
+              try {
+                const data = await apiFetch("/auth/login", { method: "POST", body: JSON.stringify({ mobile: "9999999999", password: "Admin@123" }) });
+                login({ id: data.user_id, name: data.name, role: data.role, credits: data.credits }, data.access_token);
+              } catch (e) { setGlobalError(e.message); }
+              setLoading(false);
             }}
-            className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-purple-300 text-sm font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 hover:border-purple-400 active:scale-98 transition-all"
+            className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-purple-300 text-sm font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 hover:border-purple-400 active:scale-95 transition-all"
           >
-            🛡️ Admin Login
+            🛡️ Admin Login (One Click)
           </button>
         )}
 
@@ -967,11 +971,90 @@ function RechargePage() {
   );
 }
 
+// ── Standalone Admin Login Page ────────────────────────────────────────────
+function AdminLoginPage() {
+  const { login } = useAuth();
+  const [form, setForm] = useState({ mobile: "", password: "" });
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    setError(""); setLoading(true);
+    try {
+      const data = await apiFetch("/auth/login", { method: "POST", body: JSON.stringify(form) });
+      if (data.role !== "admin") { setError("This account does not have admin access."); setLoading(false); return; }
+      login({ id: data.user_id, name: data.name, role: data.role, credits: data.credits }, data.access_token);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-slate-900 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 bg-purple-500 rounded-2xl shadow-xl mb-4 text-white text-2xl">🛡️</div>
+          <h1 className="text-2xl font-bold text-white">DocAuto Admin</h1>
+          <p className="text-purple-300 text-sm mt-1">Restricted access — administrators only</p>
+        </div>
+        <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/20 p-6 shadow-2xl">
+          <div className="flex flex-col gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-purple-200 mb-1">Mobile Number</label>
+              <input
+                value={form.mobile} onChange={e => setForm(f => ({ ...f, mobile: e.target.value }))}
+                placeholder="Admin mobile number"
+                className="w-full px-3 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
+                inputMode="numeric" maxLength={10}
+                onKeyDown={e => { if (e.key === "Enter") submit(); }}
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-purple-200 mb-1">Password</label>
+              <input
+                type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                placeholder="••••••••"
+                className="w-full px-3 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
+                onKeyDown={e => { if (e.key === "Enter") submit(); }}
+              />
+            </div>
+            {error && <div className="bg-red-500/20 border border-red-400/40 text-red-200 text-sm px-4 py-3 rounded-xl">⚠ {error}</div>}
+            <button
+              onClick={submit} disabled={loading}
+              className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 shadow-lg"
+            >
+              {loading ? <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg> : "🛡️"} Sign In to Admin Panel
+            </button>
+          </div>
+        </div>
+        <p className="text-center text-xs text-white/30 mt-4">
+          Regular user? <a href="/" className="text-purple-400 hover:underline">Go to main app</a>
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Root ───────────────────────────────────────────────────────────────────
 function AppInner() {
   const { user, token } = useAuth();
-  const [page, setPage] = useState("dashboard");
-  if (!user) return <AuthPage />;
+  const [page, setPage] = useState(() => {
+    const hash = window.location.hash;
+    if (hash === "#admin") return "admin";
+    return "dashboard";
+  });
+
+  const isAdminRoute = window.location.search.includes("admin") || window.location.hash === "#admin" || window.location.pathname.endsWith("/admin");
+
+  if (!user) {
+    if (isAdminRoute) return <AdminLoginPage />;
+    return <AuthPage />;
+  }
+
+  if (isAdminRoute && user.role === "admin" && page !== "admin") {
+    setPage("admin");
+  }
+
   const pages = {
     dashboard: <Dashboard setPage={setPage} />,
     upload:    <UploadPage setPage={setPage} />,
