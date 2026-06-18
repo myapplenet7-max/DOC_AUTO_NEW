@@ -3,11 +3,17 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
 from database import get_db
-from auth_utils import require_admin, get_current_user
+from auth_utils import require_admin, get_user_from_token_string
 import models, schemas, os
-from services.whatsapp_service import notify_user_payment_approved, notify_user_payment_rejected
 
 router = APIRouter()
+
+try:
+    from services.whatsapp_service import notify_user_payment_approved, notify_user_payment_rejected
+except Exception:
+    def notify_user_payment_approved(*a, **kw): pass
+    def notify_user_payment_rejected(*a, **kw): pass
+
 
 @router.get("/payments/pending", response_model=list[schemas.PaymentOut])
 def pending_payments(db: Session = Depends(get_db), _=Depends(require_admin)):
@@ -15,22 +21,18 @@ def pending_payments(db: Session = Depends(get_db), _=Depends(require_admin)):
         models.Payment.status == models.PaymentStatus.pending
     ).order_by(models.Payment.created_at.asc()).all()
 
+
 @router.get("/payments/screenshot/{payment_id}")
 def get_screenshot(
     payment_id: int,
     token: str = Query(None, description="JWT token for img-tag auth"),
     db: Session = Depends(get_db),
-    admin_user=None,
 ):
-    # Support Bearer header auth OR ?token= query param (needed for <img> tags)
-    from fastapi import Request
-    from fastapi.security import OAuth2PasswordBearer
-    if token:
-        user = get_user_from_token_string(token, db)
-        if user.role != models.UserRole.admin:
-            raise HTTPException(status_code=403, detail="Admin access required")
-    else:
+    if not token:
         raise HTTPException(status_code=401, detail="Token required")
+    user = get_user_from_token_string(token, db)
+    if user.role != models.UserRole.admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     payment = db.query(models.Payment).filter(models.Payment.id == payment_id).first()
     if not payment:
@@ -42,6 +44,7 @@ def get_screenshot(
     media_types = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
     media_type = media_types.get(ext, "image/jpeg")
     return FileResponse(payment.screenshot_path, media_type=media_type)
+
 
 @router.put("/payments/{payment_id}/review", response_model=schemas.PaymentOut)
 def review_payment(
@@ -60,16 +63,22 @@ def review_payment(
         payment.status = models.PaymentStatus.approved
         user.credits += payment.credits
         db.add(user)
-        notify_user_payment_approved(
-            user_whatsapp=user.mobile, user_name=user.name,
-            amount=payment.amount, credits=payment.credits, new_balance=user.credits,
-        )
+        try:
+            notify_user_payment_approved(
+                user_whatsapp=user.mobile, user_name=user.name,
+                amount=payment.amount, credits=payment.credits, new_balance=user.credits,
+            )
+        except Exception:
+            pass
     elif data.status == "rejected":
         payment.status = models.PaymentStatus.rejected
-        notify_user_payment_rejected(
-            user_whatsapp=user.mobile, user_name=user.name,
-            amount=payment.amount, note=data.admin_note,
-        )
+        try:
+            notify_user_payment_rejected(
+                user_whatsapp=user.mobile, user_name=user.name,
+                amount=payment.amount, note=data.admin_note,
+            )
+        except Exception:
+            pass
     else:
         raise HTTPException(status_code=400, detail="Status must be 'approved' or 'rejected'")
 
@@ -78,9 +87,24 @@ def review_payment(
     db.commit(); db.refresh(payment)
     return payment
 
+
 @router.get("/users", response_model=list[schemas.UserOut])
 def list_users(db: Session = Depends(get_db), _=Depends(require_admin)):
     return db.query(models.User).order_by(models.User.created_at.desc()).all()
+
+
+@router.put("/users/{user_id}/credits")
+def adjust_credits(
+    user_id: int, data: schemas.CreditAdjust,
+    db: Session = Depends(get_db), _=Depends(require_admin),
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.credits = max(0, user.credits + data.delta)
+    db.commit(); db.refresh(user)
+    return {"id": user.id, "name": user.name, "credits": user.credits}
+
 
 @router.get("/stats")
 def stats(db: Session = Depends(get_db), _=Depends(require_admin)):

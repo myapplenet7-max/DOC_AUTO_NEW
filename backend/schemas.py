@@ -53,6 +53,7 @@ class PaymentCreate(BaseModel):
 
 class PaymentOut(BaseModel):
     id: int
+    user_id: int
     amount: float
     credits: int
     upi_ref: Optional[str]
@@ -69,3 +70,6 @@ class PaymentReview(BaseModel):
 
 class BulkEnquiry(BaseModel):
     message: Optional[str] = None
+
+class CreditAdjust(BaseModel):
+    delta: int

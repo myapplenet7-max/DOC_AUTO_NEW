@@ -6,9 +6,10 @@ description: Key decisions and constraints for the DocAuto FastAPI backend runni
 # DocAuto Backend Setup
 
 ## JWT / Auth
-- Use `PyJWT` (import as `import jwt`) — NOT `python-jose` (403 blocked by package firewall)
+- Use `PyJWT` (import as `import jwt as pyjwt`) — NOT `python-jose` (403 blocked by package firewall)
 - Use `bcrypt` directly — NOT `passlib` (403 blocked)
-- `auth_utils.py` is the source of truth for token creation/verification
+- `auth_utils.py` exports `get_user_from_token_string(token, db)` for query-param auth (used by image/download endpoints)
+- Admin bypass: in `documents.py`, check `current_user.role == UserRole.admin` before deducting credits
 
 ## OCR
 - `easyocr` cannot be installed — PyTorch dependency is too large / fails silently
@@ -17,13 +18,19 @@ description: Key decisions and constraints for the DocAuto FastAPI backend runni
 - Image uploads and scanned PDFs will return placeholder text; user fills fields manually
 
 ## Artifact / Workflow
-- api-server artifact.toml dev run: `cd /home/runner/workspace/backend && uvicorn main:app --host 0.0.0.0 --port 8080 --reload`
+- api-server: `cd /home/runner/workspace/backend && uvicorn main:app --host 0.0.0.0 --port 8080 --reload`
 - `localPort = 8080`, path = `/api`
 - Database tables auto-created on startup via `Base.metadata.create_all(bind=engine)`
 
 ## Admin User
-- First registered user (mobile: 9999999999) was manually promoted to admin via SQL: `UPDATE users SET role='admin' WHERE id=1`
-- To create a new admin: register via /api/auth/register, then run the SQL above
+- Default admin: mobile `9999999999`, password `Admin@123` (created via `python create_admin.py`)
+- Admin accounts bypass credit deduction in documents.py
+- Admin role visible via purple banner in dashboard and sidebar
+- Admin credit adjust endpoint: `PUT /api/admin/users/{id}/credits` with `{"delta": N}`
+
+## Schemas
+- `PaymentOut` now includes `user_id` field (needed by admin panel to show which user submitted)
+- `CreditAdjust` schema: `{"delta": int}` — used by admin credit adjustment endpoint
 
 **Why PyJWT over python-jose:**
 Replit package firewall blocks python-jose with HTTP 403. PyJWT provides equivalent JWT encode/decode and is allowed. The API is identical for HS256 tokens.
