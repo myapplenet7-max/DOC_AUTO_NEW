@@ -29,8 +29,29 @@ def extract_text(file_path: str) -> str:
         if text and text.strip():
             return text
         return _extract_from_scanned_pdf(file_path)
+    elif ext in (".docx", ".doc"):
+        return _extract_from_docx(file_path)
     else:
         return _extract_from_image(file_path)
+
+
+def _extract_from_docx(file_path: str) -> str:
+    try:
+        from docx import Document
+        doc = Document(file_path)
+        parts = []
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if text:
+                parts.append(text)
+        for table in doc.tables:
+            for row in table.rows:
+                row_texts = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if row_texts:
+                    parts.append("  |  ".join(row_texts))
+        return "\n".join(parts)
+    except Exception as e:
+        return f"DOCX extraction error: {str(e)}"
 
 
 def _extract_from_image(file_path: str) -> str:
@@ -155,6 +176,13 @@ def detect_fields(raw_text: str) -> dict:
         amount_match = re.search(r'(?:rs\.?|₹|రూ\.?)\s*([\d,]+)', line, re.IGNORECASE)
         if amount_match and not fields["sale_amount"]:
             fields["sale_amount"] = amount_match.group(1)
+
+        reg_date_match = re.search(
+            r'\b((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\b',
+            line, re.IGNORECASE
+        )
+        if reg_date_match and not fields["registration_date"]:
+            fields["registration_date"] = reg_date_match.group(1)
 
     return fields
 

@@ -238,21 +238,14 @@ function AuthPage() {
           </div>
         </Card>
 
-        {/* Admin quick-login */}
+        {/* Admin portal link */}
         {mode === "signin" && (
-          <button
-            onClick={async () => {
-              setErrors({}); setGlobalError(""); setLoading(true);
-              try {
-                const data = await apiFetch("/auth/login", { method: "POST", body: JSON.stringify({ mobile: "9999999999", password: "Admin@123" }) });
-                login({ id: data.user_id, name: data.name, role: data.role, credits: data.credits }, data.access_token);
-              } catch (e) { setGlobalError(e.message); }
-              setLoading(false);
-            }}
-            className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-purple-300 text-sm font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 hover:border-purple-400 active:scale-95 transition-all"
+          <a
+            href="/?admin"
+            className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-purple-300 text-sm font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 hover:border-purple-400 transition-all text-center"
           >
-            🛡️ Admin Login (One Click)
-          </button>
+            🛡️ Admin Portal
+          </a>
         )}
 
         <p className="text-center text-xs text-slate-400 mt-4">PAN Forms · Sale Deeds · Registration Documents · AP/Telangana</p>
@@ -565,7 +558,7 @@ function UploadPage({ setPage }) {
             onClick={() => document.getElementById("fileInput").click()}
             className={`border-2 border-dashed rounded-2xl p-10 lg:p-14 text-center cursor-pointer transition-all ${dragging ? "border-indigo-400 bg-indigo-50" : "border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50"}`}
           >
-            <input id="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={e => setFile(e.target.files[0])} />
+            <input id="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.docx,.doc" className="hidden" onChange={e => setFile(e.target.files[0])} />
             <div className="text-4xl mb-3">📎</div>
             {file ? (
               <div>
@@ -576,7 +569,7 @@ function UploadPage({ setPage }) {
             ) : (
               <div>
                 <div className="font-semibold text-slate-700">Drop file here or tap to browse</div>
-                <div className="text-xs text-slate-400 mt-1">PDF, JPG, PNG supported</div>
+                <div className="text-xs text-slate-400 mt-1">PDF, DOCX, JPG, PNG supported</div>
               </div>
             )}
           </div>

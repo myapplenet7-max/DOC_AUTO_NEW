@@ -14,11 +14,10 @@ class PaymentStatus(str, enum.Enum):
     rejected = "rejected"
 
 CREDIT_PACKS = [
-    (10,     1),
-    (50,    12),
-    (100,   30),
-    (500,  100),
-    (1000, 250),
+    (10,    1),
+    (50,    6),
+    (100,  15),
+    (500, 100),
 ]
 
 DOC_COST_CREDITS = 1
