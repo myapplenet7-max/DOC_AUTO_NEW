@@ -1,5 +1,5 @@
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from datetime import datetime
@@ -27,38 +27,77 @@ def generate_docx(fields: dict, output_path: str):
     doc.add_paragraph(f"Generated on: {datetime.now().strftime('%d-%m-%Y %H:%M')}")
     doc.add_paragraph("")
 
-    doc.add_heading("Applicant Details", level=2)
-    _add_field_table(doc, {
-        "Full Name":      fields.get("full_name", ""),
-        "Father's Name":  fields.get("father_name", ""),
-        "Date of Birth":  fields.get("date_of_birth", ""),
-        "Aadhaar Number": fields.get("aadhar_number", ""),
-        "PAN Number":     fields.get("pan_number", ""),
-        "Mobile":         fields.get("mobile", ""),
-        "Email":          fields.get("email", ""),
-        "Pincode":        fields.get("pincode", ""),
-    })
-
-    if fields.get("survey_number") or fields.get("sale_amount") or fields.get("village"):
+    # Person Details
+    person_data = {
+        "Full Name":       fields.get("full_name", ""),
+        "Father's Name":   fields.get("father_name", ""),
+        "Husband's Name":  fields.get("husband_name", ""),
+        "Deponent Name":   fields.get("deponent_name", ""),
+        "Advocate":        fields.get("advocate_name", ""),
+        "Date of Birth":   fields.get("date_of_birth", ""),
+        "Aadhaar Number":  fields.get("aadhar_number", ""),
+        "PAN Number":      fields.get("pan_number", ""),
+        "Mobile":          fields.get("mobile", ""),
+        "Email":           fields.get("email", ""),
+        "Pincode":         fields.get("pincode", ""),
+    }
+    filled_person = {k: v for k, v in person_data.items() if v}
+    if filled_person:
+        doc.add_heading("Person / Applicant Details", level=2)
+        _add_field_table(doc, filled_person)
         doc.add_paragraph("")
+
+    # Location
+    location_data = {
+        "Address":   fields.get("address", ""),
+        "Village":   fields.get("village", ""),
+        "Mandal":    fields.get("mandal", ""),
+        "District":  fields.get("district", ""),
+        "State":     fields.get("state", ""),
+        "Pincode":   fields.get("pincode", ""),
+    }
+    filled_location = {k: v for k, v in location_data.items() if v and k not in filled_person}
+    if filled_location:
+        doc.add_heading("Location Details", level=2)
+        _add_field_table(doc, filled_location)
+        doc.add_paragraph("")
+
+    # Property Details
+    property_data = {
+        "Survey Number":       fields.get("survey_number", ""),
+        "Door Number":         fields.get("door_number", ""),
+        "Plot Number":         fields.get("plot_number", ""),
+        "Property Details":    fields.get("property_details", ""),
+        "Boundaries":          fields.get("boundaries", ""),
+        "Sale Amount (₹)":     fields.get("sale_amount", ""),
+        "Registration Date":   fields.get("registration_date", ""),
+        "Registration Number": fields.get("registration_number", ""),
+    }
+    filled_property = {k: v for k, v in property_data.items() if v}
+    if filled_property:
         doc.add_heading("Property Details", level=2)
-        _add_field_table(doc, {
-            "Survey Number":     fields.get("survey_number", ""),
-            "Village":           fields.get("village", ""),
-            "Sale Amount (₹)":   fields.get("sale_amount", ""),
-            "Registration Date": fields.get("registration_date", ""),
-        })
-
-    if fields.get("address"):
+        _add_field_table(doc, filled_property)
         doc.add_paragraph("")
-        doc.add_heading("Address", level=2)
-        doc.add_paragraph(fields["address"])
 
-    doc.add_paragraph("")
-    doc.add_heading("Raw Extracted Text", level=3)
-    p = doc.add_paragraph(fields.get("raw_text", ""))
-    if p.runs:
-        p.runs[0].font.size = Pt(8)
+    # Legal Details
+    legal_data = {
+        "Court Case Number": fields.get("court_case_number", ""),
+        "Advocate":          fields.get("advocate_name", ""),
+    }
+    filled_legal = {k: v for k, v in legal_data.items() if v and k not in filled_person}
+    if filled_legal:
+        doc.add_heading("Legal Details", level=2)
+        _add_field_table(doc, filled_legal)
+        doc.add_paragraph("")
+
+    # Raw text (small)
+    raw = fields.get("raw_text", "")
+    if raw:
+        doc.add_paragraph("")
+        doc.add_heading("Raw Extracted Text", level=3)
+        p = doc.add_paragraph(raw)
+        if p.runs:
+            p.runs[0].font.size = Pt(8)
 
     doc.save(output_path)
 

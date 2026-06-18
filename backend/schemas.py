@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 class UserRegister(BaseModel):
@@ -39,7 +39,9 @@ class DocumentOut(BaseModel):
     original_filename: str
     doc_type: Optional[str]
     extracted_fields: Optional[str]
+    template_content: Optional[str]
     output_path: Optional[str]
+    pdf_output_path: Optional[str]
     credits_used: int
     status: str
     created_at: datetime
@@ -73,3 +75,39 @@ class BulkEnquiry(BaseModel):
 
 class CreditAdjust(BaseModel):
     delta: int
+
+class TemplateCreate(BaseModel):
+    name: str
+    category: Optional[str] = "Custom Templates"
+    description: Optional[str] = None
+    template_content: str
+    field_schema: Optional[str] = None
+    source_doc_id: Optional[int] = None
+
+class TemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    template_content: Optional[str] = None
+    field_schema: Optional[str] = None
+
+class TemplateOut(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    category: Optional[str]
+    description: Optional[str]
+    template_content: str
+    field_schema: Optional[str]
+    source_doc_id: Optional[int]
+    use_count: int
+    created_at: datetime
+    updated_at: datetime
+    class Config:
+        from_attributes = True
+
+class TemplateFill(BaseModel):
+    fields: Dict[str, str]
+
+class PlaceholderApproval(BaseModel):
+    approved_placeholders: List[Dict[str, Any]]

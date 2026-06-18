@@ -22,6 +22,19 @@ CREDIT_PACKS = [
 
 DOC_COST_CREDITS = 1
 
+TEMPLATE_CATEGORIES = [
+    "Affidavit",
+    "Sale Deed",
+    "Court Documents",
+    "Agreements",
+    "Rental Agreements",
+    "GPA",
+    "Legal Notices",
+    "Certificates",
+    "Government Forms",
+    "Custom Templates",
+]
+
 class User(Base):
     __tablename__ = "users"
 
@@ -37,6 +50,7 @@ class User(Base):
 
     documents = relationship("Document", back_populates="owner")
     payments  = relationship("Payment",  back_populates="user")
+    templates = relationship("Template", back_populates="creator")
 
 
 class Document(Base):
@@ -48,12 +62,32 @@ class Document(Base):
     file_path         = Column(String, nullable=False)
     doc_type          = Column(String, nullable=True)
     extracted_fields  = Column(Text,   nullable=True)
+    template_content  = Column(Text,   nullable=True)
     output_path       = Column(String, nullable=True)
+    pdf_output_path   = Column(String, nullable=True)
     credits_used      = Column(Integer, default=1)
     status            = Column(String,  default="uploaded")
     created_at        = Column(DateTime(timezone=True), server_default=func.now())
 
     owner = relationship("User", back_populates="documents")
+
+
+class Template(Base):
+    __tablename__ = "templates"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    user_id          = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name             = Column(String, nullable=False)
+    category         = Column(String, nullable=True, default="Custom Templates")
+    description      = Column(String, nullable=True)
+    template_content = Column(Text,   nullable=False)
+    field_schema     = Column(Text,   nullable=True)
+    source_doc_id    = Column(Integer, ForeignKey("documents.id"), nullable=True)
+    use_count        = Column(Integer, default=0)
+    created_at       = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at       = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    creator = relationship("User", back_populates="templates")
 
 
 class Payment(Base):

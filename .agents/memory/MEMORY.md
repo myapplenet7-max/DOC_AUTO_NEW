@@ -1,1 +1,2 @@
 - [DocAuto Python Backend](docauto-backend.md) — FastAPI/uvicorn at port 8080; uses PyJWT+bcrypt (not python-jose/passlib, both blocked by package firewall); EasyOCR unavailable (PyTorch too large), pdfplumber handles text PDFs fine.
+- [DocAuto Template System](docauto-templates.md) — Template model added; routers/templates.py handles CRUD; services/template_service.py fills placeholders; frontend TemplateLibraryPage added with fill-form, edit, delete, create-new.
