@@ -1,45 +1,58 @@
-# [Project name]
+# DocAuto — Indian Document Automation Platform
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Upload PDFs/images → OCR (Telugu/English) → editable field extraction → DOCX download. Monetized with credits (₹10/doc), UPI payment screenshots reviewed by admin.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Backend (Python): `cd backend && uvicorn main:app --host 0.0.0.0 --port 8080 --reload`
+- Frontend (React): managed by `artifacts/docauto: web` workflow (Vite, port from $PORT)
+- API Server workflow runs Python uvicorn automatically
+- Required env: `DATABASE_URL` — Postgres connection string (auto-provisioned)
+- Required env: `SESSION_SECRET` — used as JWT secret key fallback
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- **Frontend**: React + Vite + Tailwind CSS (`artifacts/docauto/`)
+- **Backend**: Python 3.11, FastAPI, uvicorn (`backend/`)
+- **Auth**: PyJWT + bcrypt (NOT python-jose/passlib — both blocked by Replit package firewall)
+- **DB**: PostgreSQL + SQLAlchemy ORM (tables auto-created on startup)
+- **OCR**: pdfplumber (text PDFs), easyocr lazy-loaded (image/scanned PDFs — unavailable in env)
+- **Output**: python-docx for DOCX generation
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `backend/main.py` — FastAPI app entry point, table creation
+- `backend/models.py` — SQLAlchemy models (User, Document, Payment) + CREDIT_PACKS
+- `backend/auth_utils.py` — JWT/bcrypt helpers, OAuth2 dependency
+- `backend/routers/` — auth, documents, payments, admin
+- `backend/services/ocr_service.py` — text extraction + field detection
+- `backend/services/docx_service.py` — DOCX generation with Telugu font support
+- `artifacts/docauto/src/App.tsx` — full React app (all pages)
+- `artifacts/docauto/src/AdminPage.tsx` — admin panel with payment review
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Python backend runs as the `api-server` artifact on port 8080, not the Node.js Express template
+- API prefix `/api` — all routes include `/api` prefix, routes through shared proxy
+- Screenshot downloads use `?token=` query param auth (needed for `<img>` tags that can't set Authorization header)
+- EasyOCR not installed (PyTorch too large); pdfplumber handles text PDFs; image OCR shows placeholder
+- Credits: 1 credit = 1 document. Packs: ₹10/1, ₹50/6, ₹100/12, ₹500/15, ₹1000/35
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- **Auth**: Register/Login with mobile + password
+- **Upload**: PDF/image upload → OCR → editable field form → DOCX download
+- **Credits**: UPI payment + screenshot submission → admin review → credits added
+- **Admin**: Pending payment review with screenshot lightbox, user list, stats dashboard
+
+## Gotchas
+
+- **Never use python-jose or passlib** — blocked by Replit package firewall (HTTP 403)
+- Use `import jwt` (PyJWT) and `import bcrypt` directly
+- api-server artifact.toml dev command: `cd /home/runner/workspace/backend && uvicorn main:app --host 0.0.0.0 --port 8080 --reload`
+- Admin user: first user must be manually promoted via SQL: `UPDATE users SET role='admin' WHERE id=1`
+- Default admin credentials: mobile `9999999999`, password `admin123`
 
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._
-
-## Gotchas
-
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details

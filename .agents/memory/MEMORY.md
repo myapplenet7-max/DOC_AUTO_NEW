@@ -1,0 +1,1 @@
+- [DocAuto Python Backend](docauto-backend.md) — FastAPI/uvicorn at port 8080; uses PyJWT+bcrypt (not python-jose/passlib, both blocked by package firewall); EasyOCR unavailable (PyTorch too large), pdfplumber handles text PDFs fine.

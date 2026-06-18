@@ -1,0 +1,288 @@
+/**
+ * CornerDragUI.jsx
+ * Drop into frontend/src/components/
+ *
+ * Shows the uploaded photo with 4 draggable corner handles.
+ * Used when auto corner detection confidence is low OR curl is detected.
+ *
+ * Usage:
+ *   <CornerDragUI
+ *     imageUrl="/api/documents/uuid/original"
+ *     initialCorners={[[x0,y0],[x1,y1],[x2,y2],[x3,y3]]}  // TL TR BR BL
+ *     imgW={3024}
+ *     imgH={4032}
+ *     message="Low confidence — adjust corners"
+ *     curlEdges={["left"]}
+ *     onConfirm={(corners) => { ... POST to /api/documents/uuid/dewarp }}
+ *   />
+ */
+
+import { useState, useRef, useEffect, useCallback } from "react";
+
+const HANDLE_RADIUS = 22;   // px — large enough for fat fingers on mobile
+const LINE_COLOR    = "#22c55e";  // tailwind green-500
+
+// Corner labels shown next to each handle
+const LABELS = ["TL", "TR", "BR", "BL"];
+
+export default function CornerDragUI({
+  imageUrl,
+  initialCorners,
+  imgW,
+  imgH,
+  message,
+  curlEdges = [],
+  onConfirm,
+  onSkip,
+}) {
+  const canvasRef  = useRef(null);
+  const imgRef     = useRef(null);
+  const dragging   = useRef(null);   // index of corner being dragged
+
+  // Corners in *canvas* coordinates (scaled from original image coords)
+  const [corners, setCorners] = useState(null);
+  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
+  const [imgLoaded, setImgLoaded] = useState(false);
+
+  // ── Scale helpers ────────────────────────────────────────────────────────
+  function toCanvas(pt, cW, cH) {
+    return [pt[0] * cW / imgW, pt[1] * cH / imgH];
+  }
+  function toOriginal(pt, cW, cH) {
+    return [pt[0] * imgW / cW, pt[1] * imgH / cH];
+  }
+
+  // ── Init corners once image loads ────────────────────────────────────────
+  const initCorners = useCallback((cW, cH) => {
+    const scaled = initialCorners.map(pt => toCanvas(pt, cW, cH));
+    setCorners(scaled);
+  }, [initialCorners, imgW, imgH]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    setCanvasSize({ w: rect.width, h: rect.height });
+  }, [imgLoaded]);
+
+  useEffect(() => {
+    if (canvasSize.w > 0 && canvasSize.h > 0 && !corners) {
+      initCorners(canvasSize.w, canvasSize.h);
+    }
+  }, [canvasSize, corners, initCorners]);
+
+  // ── Draw ─────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const img    = imgRef.current;
+    if (!canvas || !img || !corners || !imgLoaded) return;
+
+    const ctx = canvas.getContext("2d");
+    const { w, h } = canvasSize;
+    canvas.width  = w;
+    canvas.height = h;
+
+    // Background image
+    ctx.drawImage(img, 0, 0, w, h);
+
+    // Semi-transparent overlay outside the quad
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    // Cut out the quad
+    ctx.moveTo(...corners[0]);
+    ctx.lineTo(...corners[1]);
+    ctx.lineTo(...corners[2]);
+    ctx.lineTo(...corners[3]);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fill("evenodd");
+    ctx.restore();
+
+    // Quad outline
+    ctx.beginPath();
+    ctx.moveTo(...corners[0]);
+    ctx.lineTo(...corners[1]);
+    ctx.lineTo(...corners[2]);
+    ctx.lineTo(...corners[3]);
+    ctx.closePath();
+    ctx.strokeStyle = LINE_COLOR;
+    ctx.lineWidth   = 2.5;
+    ctx.stroke();
+
+    // Midpoint handles (square) — for edge adjustments
+    for (let i = 0; i < 4; i++) {
+      const next = (i + 1) % 4;
+      const mx   = (corners[i][0] + corners[next][0]) / 2;
+      const my   = (corners[i][1] + corners[next][1]) / 2;
+      const sz   = 12;
+      ctx.fillStyle   = LINE_COLOR;
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth   = 1.5;
+      ctx.fillRect(mx - sz/2, my - sz/2, sz, sz);
+      ctx.strokeRect(mx - sz/2, my - sz/2, sz, sz);
+    }
+
+    // Corner handles (circle)
+    corners.forEach(([cx, cy], idx) => {
+      // Glow ring
+      ctx.beginPath();
+      ctx.arc(cx, cy, HANDLE_RADIUS + 4, 0, 2 * Math.PI);
+      ctx.fillStyle = "rgba(34,197,94,0.25)";
+      ctx.fill();
+
+      // Main circle
+      ctx.beginPath();
+      ctx.arc(cx, cy, HANDLE_RADIUS, 0, 2 * Math.PI);
+      ctx.fillStyle   = LINE_COLOR;
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth   = 3;
+      ctx.fill();
+      ctx.stroke();
+
+      // Label
+      ctx.fillStyle  = "#fff";
+      ctx.font       = "bold 11px system-ui";
+      ctx.textAlign  = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(LABELS[idx], cx, cy);
+    });
+  }, [corners, canvasSize, imgLoaded]);
+
+  // ── Pointer helpers ──────────────────────────────────────────────────────
+  function getPos(e) {
+    const canvas = canvasRef.current;
+    const rect   = canvas.getBoundingClientRect();
+    const client = e.touches ? e.touches[0] : e;
+    return [client.clientX - rect.left, client.clientY - rect.top];
+  }
+
+  function hitCorner(pos) {
+    if (!corners) return -1;
+    return corners.findIndex(([cx, cy]) => {
+      const dx = pos[0] - cx, dy = pos[1] - cy;
+      return Math.sqrt(dx*dx + dy*dy) <= HANDLE_RADIUS + 8;
+    });
+  }
+
+  function onPointerDown(e) {
+    e.preventDefault();
+    const pos = getPos(e);
+    const hit = hitCorner(pos);
+    if (hit >= 0) dragging.current = hit;
+  }
+
+  function onPointerMove(e) {
+    e.preventDefault();
+    if (dragging.current === null) return;
+    const [x, y] = getPos(e);
+    const { w, h } = canvasSize;
+    setCorners(prev => {
+      const next = [...prev];
+      next[dragging.current] = [
+        Math.max(0, Math.min(w, x)),
+        Math.max(0, Math.min(h, y)),
+      ];
+      return next;
+    });
+  }
+
+  function onPointerUp() { dragging.current = null; }
+
+  // ── Confirm — convert back to original image coords ──────────────────────
+  function handleConfirm() {
+    const { w, h } = canvasSize;
+    const originalCorners = corners.map(pt => toOriginal(pt, w, h));
+    onConfirm?.(originalCorners);
+  }
+
+  function handleReset() {
+    initCorners(canvasSize.w, canvasSize.h);
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+
+      {/* Status message */}
+      <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+        <p className="text-xs font-medium text-amber-800">⚠ {message}</p>
+        {curlEdges.length > 0 && (
+          <p className="text-xs text-amber-600 mt-0.5">
+            Curl detected on: {curlEdges.join(", ")} edge
+            {curlEdges.length > 1 ? "s" : ""}.
+            Drag the corner handles to straighten as best you can.
+          </p>
+        )}
+      </div>
+
+      {/* Canvas */}
+      <div className="relative w-full overflow-hidden rounded-xl border border-slate-300
+                      bg-black touch-none"
+           style={{ aspectRatio: `${imgW}/${imgH}` }}>
+
+        {/* Hidden img used as canvas source */}
+        <img
+          ref={imgRef}
+          src={imageUrl}
+          alt=""
+          className="hidden"
+          onLoad={() => setImgLoaded(true)}
+          crossOrigin="anonymous"
+        />
+
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 w-full h-full cursor-crosshair"
+          onMouseDown={onPointerDown}
+          onMouseMove={onPointerMove}
+          onMouseUp={onPointerUp}
+          onMouseLeave={onPointerUp}
+          onTouchStart={onPointerDown}
+          onTouchMove={onPointerMove}
+          onTouchEnd={onPointerUp}
+        />
+
+        {!imgLoaded && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-white text-sm">Loading…</span>
+          </div>
+        )}
+      </div>
+
+      {/* Instruction */}
+      <p className="text-center text-xs text-slate-500">
+        Drag the <span className="text-green-600 font-semibold">green corners</span> to
+        match the document edges, then tap Apply.
+      </p>
+
+      {/* Action buttons */}
+      <div className="flex gap-2">
+        <button
+          onClick={handleConfirm}
+          className="flex-1 rounded-lg bg-green-600 py-3 text-sm font-semibold
+                     text-white hover:bg-green-700 active:scale-95 transition-all"
+        >
+          ✓ Apply Correction
+        </button>
+
+        <button
+          onClick={handleReset}
+          className="rounded-lg border border-slate-300 px-4 py-3 text-sm
+                     text-slate-600 hover:bg-slate-50 active:scale-95 transition-all"
+        >
+          Reset
+        </button>
+
+        {onSkip && (
+          <button
+            onClick={onSkip}
+            className="rounded-lg border border-slate-300 px-4 py-3 text-sm
+                       text-slate-400 hover:bg-slate-50 active:scale-95 transition-all"
+          >
+            Skip
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
