@@ -1942,10 +1942,18 @@ function DocumentsPage({ setPage }) {
                       )}
                       {hasTemplate && (
                         <button
-                          onClick={() => { setPage("templates"); }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+                          disabled={creatingTemplate === doc.id}
+                          onClick={async () => {
+                            setCreatingTemplate(doc.id);
+                            try {
+                              await apiFetch(`/documents/${doc.id}/create-template`, { method: "POST" }, token);
+                            } catch {}
+                            setCreatingTemplate(null);
+                            setPage("templates");
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
                         >
-                          🔄 Reuse Template
+                          {creatingTemplate === doc.id ? "Saving…" : "🔄 Reuse Template"}
                         </button>
                       )}
                       {!hasOutput && (
