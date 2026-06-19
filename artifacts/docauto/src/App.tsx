@@ -721,6 +721,8 @@ function UploadPage({ setPage }) {
   const [showManualAdd, setShowManualAdd] = useState(false);
   const [manualText, setManualText] = useState("");
   const [manualKey, setManualKey] = useState("");
+  const [inputMode, setInputMode] = useState<"file" | "text">("file");
+  const [pastedText, setPastedText] = useState("");
 
   const STEPS = ["Upload", "Review Variables", "Fill & Generate", "Download"];
 
@@ -733,9 +735,35 @@ function UploadPage({ setPage }) {
       setResult(data);
       const phData = await apiFetch(`/documents/${data.id}/placeholders`, {}, token);
       setPlaceholders(phData.placeholders || []);
-      setRawText(phData.raw_text || "");
+      const extractedRaw = phData.raw_text || "";
+      setRawText(extractedRaw);
       setDocType(phData.doc_type || null);
       setTemplateName(file.name.replace(/\.[^.]+$/, ""));
+      if (extractedRaw === "[OCR_UNAVAILABLE]") {
+        setError("OCR is not available for image files in this environment. Please use the 'Paste Text' tab to enter your document text manually.");
+        setLoading(false);
+        return;
+      }
+      await refreshUser();
+      setStep(1);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  };
+
+  const submitText = async () => {
+    if (!pastedText.trim()) return;
+    setError(""); setLoading(true);
+    try {
+      const data = await apiFetch("/documents/from-text", {
+        method: "POST",
+        body: JSON.stringify({ text: pastedText.trim(), filename: "pasted_document.txt" }),
+      }, token);
+      setResult(data);
+      const phData = await apiFetch(`/documents/${data.id}/placeholders`, {}, token);
+      setPlaceholders(phData.placeholders || []);
+      setRawText(phData.raw_text || "");
+      setDocType(phData.doc_type || null);
+      setTemplateName("Pasted Document");
       await refreshUser();
       setStep(1);
     } catch (e) { setError(e.message); }
@@ -833,6 +861,7 @@ function UploadPage({ setPage }) {
     setGenerated(false); setTemplateSaved(false); setError("");
     setShowSaveModal(false); setHasFormatTemplate(false);
     setScanMsg(""); setShowManualAdd(false);
+    setPastedText(""); setInputMode("file");
   };
 
   const togglePlaceholder = (idx) => {
@@ -866,33 +895,85 @@ function UploadPage({ setPage }) {
           {!isAdmin && (user?.credits || 0) === 0 && (
             <Alert type="warning" className="mb-4">You have no credits. <button onClick={() => setPage("recharge")} className="font-bold underline">Buy credits</button> to process documents.</Alert>
           )}
-          <div
-            onDragOver={e => { e.preventDefault(); setDragging(true); }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) setFile(f); }}
-            onClick={() => document.getElementById("fileInput").click()}
-            className={`border-2 border-dashed rounded-2xl p-10 lg:p-14 text-center cursor-pointer transition-all ${dragging ? "border-indigo-400 bg-indigo-50" : "border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50"}`}
-          >
-            <input id="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.docx,.doc,.odt" className="hidden" onChange={e => setFile(e.target.files[0])} />
-            <div className="text-4xl mb-3">📎</div>
-            {file ? (
-              <div>
-                <div className="font-semibold text-slate-900">{file.name}</div>
-                <div className="text-xs text-slate-400 mt-1">{(file.size / 1024).toFixed(1)} KB</div>
-                <button onClick={e => { e.stopPropagation(); setFile(null); }} className="mt-2 text-xs text-red-500 hover:underline">Remove</button>
-              </div>
-            ) : (
-              <div>
-                <div className="font-semibold text-slate-700">Drop file here or tap to browse</div>
-                <div className="text-xs text-slate-400 mt-1">PDF · DOCX · ODT · JPG · PNG · Scanned documents</div>
-                <div className="text-xs text-indigo-500 mt-2 font-medium">Telugu & English · Format preserved</div>
-              </div>
-            )}
+
+          {/* Mode tabs */}
+          <div className="flex rounded-xl border border-slate-200 bg-slate-50 p-1 mb-5 gap-1">
+            <button
+              onClick={() => { setInputMode("file"); setError(""); }}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all ${inputMode === "file" ? "bg-white shadow text-indigo-700 border border-slate-200" : "text-slate-500 hover:text-slate-700"}`}
+            >
+              📎 Upload File
+            </button>
+            <button
+              onClick={() => { setInputMode("text"); setError(""); }}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all ${inputMode === "text" ? "bg-white shadow text-indigo-700 border border-slate-200" : "text-slate-500 hover:text-slate-700"}`}
+            >
+              📋 Paste Text
+            </button>
           </div>
-          {error && <Alert type="error" className="mt-4">{error}</Alert>}
-          <Button loading={loading} disabled={!file || (!isAdmin && (user?.credits || 0) === 0)} onClick={upload} className="mt-4 w-full justify-center" size="lg">
-            <Icons.Ai />{isAdmin ? "Extract & Detect Variables (Free)" : "Extract & Detect Variables (1 credit)"}
-          </Button>
+
+          {inputMode === "file" ? (
+            <>
+              <div
+                onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) setFile(f); }}
+                onClick={() => document.getElementById("fileInput").click()}
+                className={`border-2 border-dashed rounded-2xl p-10 lg:p-14 text-center cursor-pointer transition-all ${dragging ? "border-indigo-400 bg-indigo-50" : "border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50"}`}
+              >
+                <input id="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.docx,.doc,.odt" className="hidden" onChange={e => setFile(e.target.files[0])} />
+                <div className="text-4xl mb-3">📎</div>
+                {file ? (
+                  <div>
+                    <div className="font-semibold text-slate-900">{file.name}</div>
+                    <div className="text-xs text-slate-400 mt-1">{(file.size / 1024).toFixed(1)} KB</div>
+                    <button onClick={e => { e.stopPropagation(); setFile(null); }} className="mt-2 text-xs text-red-500 hover:underline">Remove</button>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="font-semibold text-slate-700">Drop file here or tap to browse</div>
+                    <div className="text-xs text-slate-400 mt-1">PDF · DOCX · ODT · JPG · PNG · Scanned documents</div>
+                    <div className="text-xs text-indigo-500 mt-2 font-medium">Telugu &amp; English · Format preserved</div>
+                  </div>
+                )}
+              </div>
+              {error && <Alert type="error" className="mt-4">{error}</Alert>}
+              <Button loading={loading} disabled={!file || (!isAdmin && (user?.credits || 0) === 0)} onClick={upload} className="mt-4 w-full justify-center" size="lg">
+                <Icons.Ai />{isAdmin ? "Extract & Detect Variables (Free)" : "Extract & Detect Variables (1 credit)"}
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                <div className="px-4 pt-4 pb-2 border-b border-slate-100">
+                  <div className="text-sm font-semibold text-slate-700">Paste your document text below</div>
+                  <div className="text-xs text-slate-400 mt-0.5">Works great for image scans — type or paste the text from your document, then let DocAuto detect variables automatically.</div>
+                </div>
+                <textarea
+                  value={pastedText}
+                  onChange={e => setPastedText(e.target.value)}
+                  placeholder={"E.g.:\n\nI, RAVI KUMAR, S/O NARAYANA, aged 35 years, residing at H.No. 5-123, MG Road, Vijayawada, Krishna District, Andhra Pradesh, do hereby solemnly affirm...\n\n(Telugu text supported too)"}
+                  className="w-full h-56 px-4 py-3 text-sm text-slate-800 font-mono resize-none outline-none placeholder-slate-300"
+                  spellCheck={false}
+                />
+                <div className="px-4 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-xs text-slate-400">{pastedText.length} characters</span>
+                  {pastedText.length > 0 && (
+                    <button onClick={() => setPastedText("")} className="text-xs text-red-400 hover:text-red-600">Clear</button>
+                  )}
+                </div>
+              </div>
+              {error && <Alert type="error" className="mt-4">{error}</Alert>}
+              <Button loading={loading} disabled={!pastedText.trim() || (!isAdmin && (user?.credits || 0) === 0)} onClick={submitText} className="mt-4 w-full justify-center" size="lg">
+                <Icons.Ai />{isAdmin ? "Detect Variables from Text (Free)" : "Detect Variables from Text (1 credit)"}
+              </Button>
+              <div className="mt-3 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <span className="text-amber-500 mt-0.5">💡</span>
+                <p className="text-xs text-amber-700">Use this tab when uploading an image (JPG/PNG) doesn't extract text — image OCR requires Tesseract which may not be available. Paste the text manually to proceed.</p>
+              </div>
+            </>
+          )}
+
           <div className="mt-5 grid grid-cols-3 gap-3 text-center">
             {[
               ["🔒", "Format Preserved", "DOCX layout kept 95–100% intact"],

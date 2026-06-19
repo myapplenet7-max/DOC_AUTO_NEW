@@ -83,19 +83,38 @@ def _extract_odt_fallback(file_path: str) -> str:
 
 
 def _extract_from_image(file_path: str) -> str:
+    import logging
+    logger = logging.getLogger(__name__)
     try:
         from PIL import Image
-        import pytesseract
         img = Image.open(file_path)
+    except Exception as e:
+        logger.error("Failed to open image %s: %s", file_path, e)
+        return f"[Image open error: {e}]"
+
+    try:
+        import pytesseract
+    except ImportError:
+        logger.warning("pytesseract not installed — OCR unavailable for image files")
+        return "[OCR_UNAVAILABLE]"
+
+    try:
         try:
             return pytesseract.image_to_string(img, lang="tel+eng")
+        except pytesseract.TesseractNotFoundError:
+            logger.warning("Tesseract binary not found — OCR unavailable. Install tesseract-ocr.")
+            return "[OCR_UNAVAILABLE]"
         except Exception:
             try:
                 return pytesseract.image_to_string(img, lang="eng")
+            except pytesseract.TesseractNotFoundError:
+                logger.warning("Tesseract binary not found — OCR unavailable.")
+                return "[OCR_UNAVAILABLE]"
             except Exception:
                 return pytesseract.image_to_string(img)
-    except Exception:
-        return "[OCR not available]"
+    except Exception as e:
+        logger.error("pytesseract error on %s: %s", file_path, e)
+        return "[OCR_UNAVAILABLE]"
 
 
 def _extract_from_pdf(file_path: str) -> str:

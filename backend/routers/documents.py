@@ -36,6 +36,41 @@ def _ext(path: str) -> str:
     return os.path.splitext(path)[1].lower()
 
 
+@router.post("/from-text", response_model=schemas.DocumentOut)
+async def create_document_from_text(
+    body: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Create a document record directly from pasted text, bypassing OCR."""
+    is_admin = current_user.role == models.UserRole.admin
+
+    if not is_admin and current_user.credits < DOC_COST_CREDITS:
+        raise HTTPException(status_code=402, detail="Not enough credits. Please recharge.")
+
+    raw_text = (body.get("text") or "").strip()
+    if not raw_text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+
+    filename = body.get("filename") or "pasted_text.txt"
+    fields = detect_fields(raw_text)
+
+    if not is_admin:
+        current_user.credits -= DOC_COST_CREDITS
+        db.add(current_user)
+
+    doc = models.Document(
+        user_id=current_user.id,
+        original_filename=filename,
+        file_path="",
+        extracted_fields=json.dumps(fields, ensure_ascii=False),
+        credits_used=0 if is_admin else DOC_COST_CREDITS,
+        status="processed",
+    )
+    db.add(doc); db.commit(); db.refresh(doc)
+    return doc
+
+
 @router.post("/upload", response_model=schemas.DocumentOut)
 async def upload_document(
     file: UploadFile = File(...),
