@@ -67,12 +67,18 @@ def preprocess_image(image_path: str, params: dict | None = None) -> Image.Image
     #   [ 0  -1   0 ]
     #   [-1   c  -1 ]    where c = sharpness centre weight
     #   [ 0  -1   0 ]
+    # Note: Pillow 10+ requires size as a 2-tuple (w, h) — NOT a plain int
     c = float(p["sharpness"])
     img_pil_gray = Image.fromarray((adjusted * 255).astype(np.uint8), mode="L")
     kernel_data = [0, -1, 0, -1, int(c), -1, 0, -1, 0]
     scale = max(1, int(c) - 4)           # keep output in range
-    sharpen_filter = ImageFilter.Kernel(size=3, kernel=kernel_data, scale=scale, offset=0)
-    img_sharp = img_pil_gray.filter(sharpen_filter)
+    try:
+        sharpen_filter = ImageFilter.Kernel(size=(3, 3), kernel=kernel_data, scale=scale, offset=0)
+        img_sharp = img_pil_gray.filter(sharpen_filter)
+    except TypeError:
+        # Fallback for older Pillow API (size as int)
+        sharpen_filter = ImageFilter.Kernel(size=3, kernel=kernel_data, scale=scale, offset=0)
+        img_sharp = img_pil_gray.filter(sharpen_filter)
     sharp = np.array(img_sharp, dtype=np.float32) / 255.0
     sharp = np.clip(sharp, 0.0, 1.0)
 

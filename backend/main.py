@@ -1,10 +1,11 @@
 import os
 import logging
+import traceback
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from routers import auth, documents, payments, admin, templates, resumes
 from database import engine, Base, SessionLocal
 
@@ -21,6 +22,18 @@ ADMIN_NAME     = os.getenv("ADMIN_NAME",      "Admin")
 FRONTEND_DIST = Path("/home/runner/workspace/artifacts/docauto/dist/public")
 
 app = FastAPI(title="DocAuto API", version="2.0.0")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Ensure ALL unhandled exceptions return JSON — never plain text."""
+    logger.error("Unhandled exception on %s %s: %s\n%s",
+                 request.method, request.url.path,
+                 exc, traceback.format_exc())
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {type(exc).__name__}: {str(exc)[:200]}"},
+    )
 
 
 @app.on_event("startup")

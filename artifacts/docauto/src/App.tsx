@@ -36,13 +36,41 @@ function AuthProvider({ children }) {
   return <AuthContext.Provider value={{ user, token, login, logout, refreshUser }}>{children}</AuthContext.Provider>;
 }
 
-async function apiFetch(path, opts = {}, token = null) {
-  const headers = { ...(opts.headers || {}) };
+async function apiFetch(path, opts: any = {}, token: string | null = null, _retry = true) {
+  const headers: Record<string, string> = { ...(opts.headers || {}) };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (!(opts.body instanceof FormData)) headers["Content-Type"] = "application/json";
   const res = await fetch(`${API}${path}`, { ...opts, headers });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Request failed");
+
+  // Safe JSON parse — server sometimes returns plain-text on errors
+  let data: any;
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    try { data = await res.json(); }
+    catch { data = { detail: `Server error (${res.status})` }; }
+  } else {
+    // Non-JSON body (plain text / HTML from proxy or 500)
+    const text = await res.text().catch(() => "");
+    if (!res.ok) {
+      // Retry once on transient 500
+      if (_retry && res.status >= 500) {
+        await new Promise(r => setTimeout(r, 800));
+        return apiFetch(path, opts, token, false);
+      }
+      throw new Error(
+        text.startsWith("{") ? JSON.parse(text)?.detail :
+        text.length < 200 ? text :
+        `Server error (${res.status}). Please try again.`
+      );
+    }
+    try { data = JSON.parse(text); }
+    catch { throw new Error("Unexpected response from server. Please try again."); }
+  }
+
+  if (!res.ok) {
+    const msg = data?.detail || data?.message || `Request failed (${res.status})`;
+    throw new Error(msg);
+  }
   return data;
 }
 
@@ -1297,8 +1325,19 @@ function UploadPage({ setPage }) {
             )}
 
             {approvedPhs.length === 0 ? (
-              <div className="text-xs text-slate-500 p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                No variables confirmed yet. Select text above, check suggestions below, or add manually.
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200">
+                <div className="text-xs font-semibold text-amber-800 mb-1">
+                  {placeholders.length === 0
+                    ? "No template variables detected automatically"
+                    : "No variables approved yet"}
+                </div>
+                <div className="text-xs text-amber-700 leading-relaxed">
+                  {placeholders.length === 0
+                    ? rawText && rawText.length > 10
+                      ? "The document text was extracted but no variable patterns (names, dates, IDs, amounts) were found. Try: select text above to mark it as a variable, or use + Add Variable Manually below."
+                      : "No text was extracted from this file. If it's a scanned image, try adjusting the preprocessing sliders for better contrast, then re-upload."
+                    : "Select text above to approve it as a variable, check suggestions below, or add manually."}
+                </div>
               </div>
             ) : (
               <div className="space-y-2">

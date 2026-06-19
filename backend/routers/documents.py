@@ -83,10 +83,16 @@ async def upload_document(
     if not is_admin and current_user.credits < DOC_COST_CREDITS:
         raise HTTPException(status_code=402, detail="Not enough credits. Please recharge.")
 
+    import logging as _log
+    _logger = _log.getLogger("docauto.upload")
+
     safe_name = file.filename.replace(" ", "_")
     file_path = os.path.join(UPLOAD_DIR, f"{current_user.id}_{safe_name}")
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
+    _logger.info("Saved upload: %s (%s bytes) ext=%s",
+                 safe_name, os.path.getsize(file_path),
+                 os.path.splitext(safe_name)[1].lower())
 
     pp = None
     if preprocess_params:
@@ -95,8 +101,15 @@ async def upload_document(
         except Exception:
             pp = None
 
-    raw_text = extract_text(file_path, preprocess_params=pp, document_id=None, db=db)
-    fields   = detect_fields(raw_text)
+    try:
+        raw_text = extract_text(file_path, preprocess_params=pp, document_id=None, db=db)
+        _logger.info("extract_text result: %d chars, preview: %r",
+                     len(raw_text), raw_text[:120])
+    except Exception as exc:
+        _logger.exception("extract_text failed for %s: %s", safe_name, exc)
+        raw_text = f"[EXTRACTION_ERROR: {exc}]"
+
+    fields = detect_fields(raw_text)
 
     if not is_admin:
         current_user.credits -= DOC_COST_CREDITS
