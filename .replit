@@ -42,7 +42,7 @@ externalPort = 80
 
 [nix]
 channel = "stable-25_05"
-packages = ["cargo", "freetype", "lcms2", "libiconv", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "poppler_utils", "rustc", "tcl", "tk", "zlib"]
+packages = ["cargo", "freetype", "lcms2", "libiconv", "libimagequant", "libjpeg", "libtiff", "libwebp", "libxcrypt", "openjpeg", "poppler_utils", "rustc", "tcl", "tesseract", "tk", "zlib"]
 
 [userenv]
 

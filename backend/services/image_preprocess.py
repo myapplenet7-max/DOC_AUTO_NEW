@@ -84,6 +84,21 @@ def preprocess_image(image_path: str, params: dict | None = None) -> Image.Image
     bt = float(p["binarize_threshold"])
     binary = np.where(whitened > bt, 1.0, 0.0)
 
+    # ── Step 7: Region brightening (optional) ────────────────────────────────
+    reg = p.get("brighten_region")
+    if reg and isinstance(reg, dict):
+        h, w = binary.shape
+        rx1 = max(0, int(float(reg.get("x", 0)) * w))
+        ry1 = max(0, int(float(reg.get("y", 0)) * h))
+        rx2 = min(w, int((float(reg.get("x", 0)) + float(reg.get("w", 0))) * w))
+        ry2 = min(h, int((float(reg.get("y", 0)) + float(reg.get("h", 0))) * h))
+        if rx2 > rx1 and ry2 > ry1:
+            # Apply extra brightening: re-binarize shadow region with lower threshold
+            # (grey shadows → white background, but dark text ink stays dark)
+            region_slice = whitened[ry1:ry2, rx1:rx2]
+            lower_bt = bt * 0.6  # lower threshold = more pixels become white
+            binary[ry1:ry2, rx1:rx2] = np.where(region_slice > lower_bt, 1.0, 0.0)
+
     # ── Return uint8 PIL image ─────────────────────────────────────────────────
     out = (binary * 255).astype(np.uint8)
     return Image.fromarray(out, mode="L")
