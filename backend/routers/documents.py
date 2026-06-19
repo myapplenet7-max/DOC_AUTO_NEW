@@ -141,6 +141,9 @@ def get_placeholders(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    import logging as _log
+    _ph_logger = _log.getLogger("docauto.placeholders")
+
     doc = db.query(models.Document).filter(
         models.Document.id == doc_id, models.Document.user_id == current_user.id
     ).first()
@@ -148,11 +151,38 @@ def get_placeholders(
         raise HTTPException(status_code=404, detail="Document not found")
     fields = json.loads(doc.extracted_fields or "{}")
     raw_text = fields.get("raw_text", "")
-    placeholders = detect_placeholders(raw_text, fields)
     is_docx = _ext(doc.file_path) in DOCX_EXTS
 
     from services.ocr_service import detect_document_type
     doc_type_info = detect_document_type(raw_text)
+    doc_type = doc_type_info.get("type", "default")
+
+    # ── Primary extraction: regex / keyword ───────────────────────────────────
+    t0 = __import__("time").time()
+    regex_placeholders = detect_placeholders(raw_text, fields)
+    regex_ms = int((__import__("time").time() - t0) * 1000)
+    _ph_logger.info(
+        "doc_id=%d regex extraction: %d fields in %dms",
+        doc_id, len(regex_placeholders), regex_ms,
+    )
+
+    # ── Enhancement layer: Groq AI (non-blocking, cached) ────────────────────
+    try:
+        from services.hybrid_extraction_service import merge_with_groq
+        t1 = __import__("time").time()
+        placeholders = merge_with_groq(raw_text, regex_placeholders, doc_type)
+        groq_ms = int((__import__("time").time() - t1) * 1000)
+        _ph_logger.info(
+            "doc_id=%d Groq merge: %d → %d fields in %dms",
+            doc_id, len(regex_placeholders), len(placeholders), groq_ms,
+        )
+    except Exception as exc:
+        # Never fail document processing because of Groq
+        _ph_logger.error(
+            "doc_id=%d hybrid merge raised unexpectedly — using regex only: %s",
+            doc_id, exc,
+        )
+        placeholders = regex_placeholders
 
     return {
         "doc_id": doc_id,
@@ -171,6 +201,9 @@ def rescan_placeholders(
     current_user: models.User = Depends(get_current_user),
 ):
     """Second pass: find missing variables not in current placeholder list."""
+    import logging as _log
+    _rs_logger = _log.getLogger("docauto.rescan")
+
     doc = db.query(models.Document).filter(
         models.Document.id == doc_id, models.Document.user_id == current_user.id
     ).first()
@@ -180,8 +213,36 @@ def rescan_placeholders(
     raw_text = fields.get("raw_text", "")
     existing = body.get("existing_placeholders", [])
 
-    from services.ocr_service import rescan_for_missing
+    from services.ocr_service import rescan_for_missing, detect_document_type
+
+    # ── Primary rescan: regex / keyword on masked text ────────────────────────
     new_ph = rescan_for_missing(raw_text, existing)
+    _rs_logger.info(
+        "doc_id=%d rescan regex: %d new fields (existing=%d)",
+        doc_id, len(new_ph), len(existing),
+    )
+
+    # ── Groq enhancement: fill fields missed by both primary passes ───────────
+    try:
+        from services.hybrid_extraction_service import groq_rescan_fill
+        doc_type_info = detect_document_type(raw_text)
+        doc_type = doc_type_info.get("type", "default")
+        # Pass all known placeholders (existing + regex new) so Groq doesn't repeat them
+        all_known = existing + new_ph
+        groq_new = groq_rescan_fill(raw_text, all_known, doc_type)
+        if groq_new:
+            _rs_logger.info(
+                "doc_id=%d Groq rescan added %d additional fields",
+                doc_id, len(groq_new),
+            )
+            new_ph = new_ph + groq_new
+    except Exception as exc:
+        # Never fail rescan because of Groq
+        _rs_logger.error(
+            "doc_id=%d Groq rescan failed — regex-only results returned: %s",
+            doc_id, exc,
+        )
+
     return {"new_placeholders": new_ph, "count": len(new_ph)}
 
 
