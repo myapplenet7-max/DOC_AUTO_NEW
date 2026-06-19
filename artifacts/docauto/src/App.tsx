@@ -304,6 +304,7 @@ function Layout({ page, setPage, children }) {
     { id: "upload",     label: "Upload & Extract", icon: "📤" },
     { id: "templates",  label: "Template Library", icon: "📚" },
     { id: "documents",  label: "My Documents",     icon: "📄" },
+    { id: "resume",     label: "Resume Builder",   icon: "📝" },
     { id: "recharge",   label: "Buy Credits",      icon: "💳" },
     ...(user?.role === "admin" ? [{ id: "admin", label: "Admin Panel", icon: "🛡️" }] : []),
   ];
@@ -401,6 +402,7 @@ function Dashboard({ setPage }) {
   const actions = [
     { title: "Upload & Extract",  desc: "OCR any document — PDF, DOCX, Image",  icon: "📤", page: "upload",    color: "bg-indigo-50 border-indigo-100",   iconBg: "bg-indigo-100 text-indigo-600" },
     { title: "Template Library",  desc: "Browse, save & reuse document templates", icon: "📚", page: "templates", color: "bg-purple-50 border-purple-100", iconBg: "bg-purple-100 text-purple-600" },
+    { title: "Resume Builder",    desc: "Create professional resumes — Fresher, Experienced, Creative", icon: "📝", page: "resume", color: "bg-rose-50 border-rose-100", iconBg: "bg-rose-100 text-rose-600" },
     { title: "My Documents",      desc: "View and download past documents",       icon: "📄", page: "documents", color: "bg-slate-50 border-slate-100",     iconBg: "bg-slate-100 text-slate-600" },
     { title: "Buy Credits",       desc: "Recharge from ₹10 to ₹1000",            icon: "💳", page: "recharge",  color: "bg-emerald-50 border-emerald-100", iconBg: "bg-emerald-100 text-emerald-600" },
     ...(isAdmin ? [{ title: "Admin Panel", desc: "Manage users, payments & stats", icon: "🛡️", page: "admin", color: "bg-amber-50 border-amber-100", iconBg: "bg-amber-100 text-amber-600" }] : []),
@@ -2041,6 +2043,605 @@ function RechargePage() {
   );
 }
 
+// ── Resume Builder ───────────────────────────────────────────────────────────
+const RESUME_TYPES = [
+  { id: "fresher",     label: "Fresher / Student",    icon: "🎓", desc: "Perfect for fresh graduates — education, projects, skills", color: "bg-blue-50 border-blue-200 hover:border-blue-400" },
+  { id: "experienced", label: "Experienced Professional", icon: "💼", desc: "Multi-section with work history, achievements & certifications", color: "bg-emerald-50 border-emerald-200 hover:border-emerald-400" },
+  { id: "creative",    label: "Creative / Designer",   icon: "🎨", desc: "Bold layout with portfolio link and highlighted skills", color: "bg-purple-50 border-purple-200 hover:border-purple-400" },
+];
+
+const EMPTY_FORM = () => ({
+  personal: { name: "", phone: "", email: "", location: "", linkedin: "", portfolio: "" },
+  summary: "",
+  education: [{ institution: "", degree: "", field: "", year: "", grade: "" }],
+  experience: [{ company: "", title: "", start: "", end: "", current: false, description: "" }],
+  skillsText: "",
+  certifications: [{ name: "", issuer: "", year: "" }],
+  projects: [{ name: "", description: "", tech: "", url: "" }],
+  achievementsText: "",
+});
+
+function arrAdd(arr, template) { return [...arr, { ...template }]; }
+function arrRemove(arr, idx)   { return arr.filter((_, i) => i !== idx); }
+function arrUpdate(arr, idx, key, val) {
+  return arr.map((item, i) => i === idx ? { ...item, [key]: val } : item);
+}
+
+function ResumePage() {
+  const { token, user, refreshUser } = useAuth();
+  const [view, setView] = useState("list");       // list | typeSelect | edit | preview
+  const [versions, setVersions] = useState([]);
+  const [loadingVersions, setLoadingVersions] = useState(true);
+  const [resumeId, setResumeId] = useState(null);
+  const [resumeType, setResumeType] = useState("fresher");
+  const [versionName, setVersionName] = useState("My Resume");
+  const [form, setForm] = useState(EMPTY_FORM());
+  const [step, setStep] = useState(0);           // 0 personal | 1 education | 2 expOrProj | 3 skills | 4 preview
+  const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [previewReady, setPreviewReady] = useState(false);
+  const [downloadReady, setDownloadReady] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+
+  const clearMsgs = () => { setError(""); setSuccess(""); };
+
+  const loadVersions = () => {
+    setLoadingVersions(true);
+    apiFetch("/resumes/", {}, token)
+      .then(setVersions)
+      .catch(e => setError(e.message))
+      .finally(() => setLoadingVersions(false));
+  };
+  useEffect(() => { loadVersions(); }, []);
+
+  const formToJson = () => {
+    const skills = form.skillsText.split(",").map(s => s.trim()).filter(Boolean);
+    const achievements = form.achievementsText.split("\n").map(s => s.trim()).filter(Boolean);
+    return JSON.stringify({
+      type: resumeType,
+      personal: form.personal,
+      summary: form.summary,
+      education: form.education,
+      experience: form.experience,
+      skills,
+      certifications: form.certifications,
+      projects: form.projects,
+      achievements,
+    });
+  };
+
+  const loadFormFromJson = (json, type) => {
+    try {
+      const d = JSON.parse(json);
+      setForm({
+        personal:         d.personal || { name: "", phone: "", email: "", location: "", linkedin: "", portfolio: "" },
+        summary:          d.summary || "",
+        education:        d.education?.length ? d.education : [{ institution: "", degree: "", field: "", year: "", grade: "" }],
+        experience:       d.experience?.length ? d.experience : [{ company: "", title: "", start: "", end: "", current: false, description: "" }],
+        skillsText:       Array.isArray(d.skills) ? d.skills.join(", ") : (d.skills || ""),
+        certifications:   d.certifications?.length ? d.certifications : [{ name: "", issuer: "", year: "" }],
+        projects:         d.projects?.length ? d.projects : [{ name: "", description: "", tech: "", url: "" }],
+        achievementsText: Array.isArray(d.achievements) ? d.achievements.join("\n") : (d.achievements || ""),
+      });
+      setResumeType(type || d.type || "fresher");
+    } catch {}
+  };
+
+  const startNew = (type) => {
+    setResumeType(type);
+    setVersionName("My Resume");
+    setForm(EMPTY_FORM());
+    setForm(f => ({ ...f, personal: { ...f.personal, name: user?.name || "" } }));
+    setResumeId(null);
+    setStep(0);
+    setPreviewReady(false);
+    setDownloadReady(false);
+    clearMsgs();
+    setView("edit");
+  };
+
+  const editVersion = (r) => {
+    setResumeId(r.id);
+    setVersionName(r.version_name);
+    setPreviewReady(!!r.preview_path);
+    setDownloadReady(!!r.output_path);
+    loadFormFromJson(r.data_json || "{}", r.resume_type);
+    setStep(0);
+    clearMsgs();
+    setView("edit");
+  };
+
+  const saveAndContinue = async () => {
+    clearMsgs(); setSaving(true);
+    try {
+      const data_json = formToJson();
+      if (!resumeId) {
+        const r = await apiFetch("/resumes/", { method: "POST", body: JSON.stringify({ resume_type: resumeType, version_name: versionName, data_json }) }, token);
+        setResumeId(r.id);
+        setSuccess("Saved!");
+      } else {
+        await apiFetch(`/resumes/${resumeId}`, { method: "PUT", body: JSON.stringify({ version_name: versionName, data_json }) }, token);
+        setPreviewReady(false); setDownloadReady(false);
+        setSuccess("Saved!");
+      }
+      setTimeout(() => setSuccess(""), 2000);
+      if (step < 4) setStep(s => s + 1);
+    } catch (e) { setError(e.message); }
+    setSaving(false);
+  };
+
+  const saveOnly = async () => {
+    clearMsgs(); setSaving(true);
+    try {
+      const data_json = formToJson();
+      if (!resumeId) {
+        const r = await apiFetch("/resumes/", { method: "POST", body: JSON.stringify({ resume_type: resumeType, version_name: versionName, data_json }) }, token);
+        setResumeId(r.id);
+      } else {
+        await apiFetch(`/resumes/${resumeId}`, { method: "PUT", body: JSON.stringify({ version_name: versionName, data_json }) }, token);
+        setPreviewReady(false); setDownloadReady(false);
+      }
+      setSuccess("Draft saved."); setTimeout(() => setSuccess(""), 2000);
+    } catch (e) { setError(e.message); }
+    setSaving(false);
+  };
+
+  const generatePreview = async () => {
+    if (!resumeId) { setError("Save your details first."); return; }
+    clearMsgs(); setGenerating(true);
+    try {
+      const data_json = formToJson();
+      await apiFetch(`/resumes/${resumeId}`, { method: "PUT", body: JSON.stringify({ data_json }) }, token);
+      await apiFetch(`/resumes/${resumeId}/preview`, { method: "POST" }, token);
+      setPreviewReady(true);
+      setSuccess("Preview ready! Click to download the watermarked preview.");
+    } catch (e) { setError(e.message); }
+    setGenerating(false);
+  };
+
+  const generateDownload = async () => {
+    if (!resumeId) { setError("Save your details first."); return; }
+    clearMsgs(); setDownloading(true);
+    try {
+      const data_json = formToJson();
+      await apiFetch(`/resumes/${resumeId}`, { method: "PUT", body: JSON.stringify({ data_json }) }, token);
+      const r = await apiFetch(`/resumes/${resumeId}/download`, { method: "POST" }, token);
+      setDownloadReady(true);
+      if (r.credits_used > 0) {
+        setSuccess(`Resume generated! ${r.credits_used} credit deducted.`);
+        refreshUser && refreshUser();
+      } else {
+        setSuccess("Resume generated successfully!");
+      }
+    } catch (e) { setError(e.message); }
+    setDownloading(false);
+  };
+
+  const deleteVersion = async (id) => {
+    try {
+      await apiFetch(`/resumes/${id}`, { method: "DELETE" }, token);
+      setDeleteConfirm(null);
+      loadVersions();
+    } catch (e) { setError(e.message); }
+  };
+
+  const goBack = () => { setView("list"); loadVersions(); clearMsgs(); };
+
+  const setP = (key) => (e) => setForm(f => ({ ...f, personal: { ...f.personal, [key]: e.target.value } }));
+
+  const STEPS = ["Personal", resumeType === "experienced" ? "Education" : "Education", resumeType !== "fresher" ? "Experience" : "Projects", "Skills", "Preview"];
+
+  // ── Render: List ────────────────────────────────────────────────────────────
+  if (view === "list") {
+    const typeColor = { fresher: "text-blue-600 bg-blue-50", experienced: "text-emerald-600 bg-emerald-50", creative: "text-purple-600 bg-purple-50" };
+    const typeIcon  = { fresher: "🎓", experienced: "💼", creative: "🎨" };
+    return (
+      <div className="max-w-3xl mx-auto">
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+          <div>
+            <h2 className="text-xl lg:text-2xl font-bold text-slate-900">📝 Resume Builder</h2>
+            <p className="text-slate-500 text-sm mt-1">Create professional resumes — Fresher, Experienced, or Creative</p>
+          </div>
+          <Button onClick={() => setView("typeSelect")} variant="primary"><span>＋</span> New Resume</Button>
+        </div>
+        {error && <Alert type="error" className="mb-4">{error}</Alert>}
+        {deleteConfirm && (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+            <Card className="p-6 max-w-sm w-full">
+              <div className="text-lg font-bold text-slate-900 mb-2">Delete Resume?</div>
+              <p className="text-sm text-slate-600 mb-4">Delete <strong>"{deleteConfirm.version_name}"</strong>? This cannot be undone.</p>
+              <div className="flex gap-3">
+                <Button onClick={() => deleteVersion(deleteConfirm.id)} variant="danger" className="flex-1">Delete</Button>
+                <Button onClick={() => setDeleteConfirm(null)} variant="outline" className="flex-1">Cancel</Button>
+              </div>
+            </Card>
+          </div>
+        )}
+        {loadingVersions ? (
+          <div className="flex items-center gap-3 text-slate-500 py-12 justify-center"><Icons.Spinner /> Loading…</div>
+        ) : versions.length === 0 ? (
+          <Card className="p-12 text-center">
+            <div className="text-5xl mb-4">📝</div>
+            <div className="font-semibold text-slate-700 text-lg">No resumes yet</div>
+            <p className="text-slate-500 text-sm mt-2 mb-6">Build your first professional resume in minutes</p>
+            <Button onClick={() => setView("typeSelect")} variant="primary" size="lg">Create Your Resume</Button>
+          </Card>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {versions.map(r => (
+              <Card key={r.id} className="p-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <div className="text-3xl">{typeIcon[r.resume_type] || "📝"}</div>
+                    <div>
+                      <div className="font-bold text-slate-900">{r.version_name}</div>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${typeColor[r.resume_type] || "text-slate-600 bg-slate-50"}`}>
+                          {r.resume_type}
+                        </span>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${r.status === "generated" ? "text-emerald-600 bg-emerald-50" : "text-amber-600 bg-amber-50"}`}>
+                          {r.status}
+                        </span>
+                        <span className="text-xs text-slate-400">{new Date(r.created_at).toLocaleDateString("en-IN")}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {r.output_path && (
+                      <a href={`/api/resumes/${r.id}/download-file?token=${token}`} download
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-all">
+                        ⬇ Download
+                      </a>
+                    )}
+                    <Button onClick={() => editVersion(r)} variant="outline" size="sm">✏️ Edit</Button>
+                    <Button onClick={() => setDeleteConfirm(r)} variant="danger" size="sm">🗑</Button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Render: Type Selection ───────────────────────────────────────────────────
+  if (view === "typeSelect") {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <button onClick={() => setView("list")} className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 mb-6 font-medium">← Back</button>
+        <h2 className="text-xl font-bold text-slate-900 mb-2">Choose Resume Type</h2>
+        <p className="text-slate-500 text-sm mb-6">Pick the template that best fits your profile</p>
+        {error && <Alert type="error" className="mb-4">{error}</Alert>}
+        <div className="flex flex-col gap-4">
+          {RESUME_TYPES.map(t => (
+            <button key={t.id} onClick={() => startNew(t.id)}
+              className={`text-left p-5 rounded-2xl border-2 transition-all group ${t.color}`}>
+              <div className="flex items-center gap-4">
+                <div className="text-4xl">{t.icon}</div>
+                <div>
+                  <div className="font-bold text-slate-900 text-base group-hover:text-indigo-700 transition-colors">{t.label}</div>
+                  <div className="text-sm text-slate-500 mt-0.5">{t.desc}</div>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render: Edit ──────────────────────────────────────────────────────────────
+  const isExperienced = resumeType === "experienced";
+  const isFresher     = resumeType === "fresher";
+
+  const inputCls = "w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500";
+  const labelCls = "text-xs font-semibold text-slate-600 mb-1 block";
+  const Field = ({ label, value, onChange, placeholder = "", type = "text", className = "" }) => (
+    <div className={className}>
+      <label className={labelCls}>{label}</label>
+      <input type={type} value={value} onChange={onChange} placeholder={placeholder} className={inputCls} />
+    </div>
+  );
+  const Textarea = ({ label, value, onChange, placeholder = "", rows = 3 }) => (
+    <div>
+      <label className={labelCls}>{label}</label>
+      <textarea value={value} onChange={onChange} placeholder={placeholder} rows={rows} className={inputCls + " resize-none"} />
+    </div>
+  );
+
+  const renderStep = () => {
+    if (step === 0) return (
+      <div className="space-y-4">
+        <h3 className="font-bold text-slate-900 text-base">Personal Information</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Full Name *" value={form.personal.name} onChange={e => setP("name")(e)} placeholder="e.g. Ravi Kumar" />
+          <Field label="Phone Number" value={form.personal.phone} onChange={e => setP("phone")(e)} placeholder="e.g. +91 9876543210" />
+          <Field label="Email Address" type="email" value={form.personal.email} onChange={e => setP("email")(e)} placeholder="you@example.com" />
+          <Field label="Location / City" value={form.personal.location} onChange={e => setP("location")(e)} placeholder="e.g. Hyderabad, Telangana" />
+          <Field label="LinkedIn URL" value={form.personal.linkedin} onChange={e => setP("linkedin")(e)} placeholder="linkedin.com/in/yourname" />
+          <Field label={resumeType === "creative" ? "Portfolio / Website" : "Portfolio (optional)"} value={form.personal.portfolio} onChange={e => setP("portfolio")(e)} placeholder="yourwebsite.com" />
+        </div>
+        <Textarea label="Professional Summary / Objective" value={form.summary}
+          onChange={e => setForm(f => ({ ...f, summary: e.target.value }))}
+          placeholder={isFresher ? "Brief objective statement e.g. Motivated B.Tech graduate seeking opportunities in software development…" : "Brief professional summary highlighting your key strengths and experience…"}
+          rows={3} />
+      </div>
+    );
+
+    if (step === 1) return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-slate-900 text-base">Education</h3>
+          <Button size="sm" variant="outline" onClick={() => setForm(f => ({ ...f, education: arrAdd(f.education, { institution: "", degree: "", field: "", year: "", grade: "" }) }))}>+ Add</Button>
+        </div>
+        {form.education.map((edu, i) => (
+          <Card key={i} className="p-4 relative">
+            {form.education.length > 1 && (
+              <button onClick={() => setForm(f => ({ ...f, education: arrRemove(f.education, i) }))}
+                className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg font-bold transition-colors">×</button>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Institution / University *" value={edu.institution}
+                onChange={e => setForm(f => ({ ...f, education: arrUpdate(f.education, i, "institution", e.target.value) }))}
+                placeholder="e.g. Osmania University" className="sm:col-span-2" />
+              <Field label="Degree" value={edu.degree}
+                onChange={e => setForm(f => ({ ...f, education: arrUpdate(f.education, i, "degree", e.target.value) }))}
+                placeholder="e.g. B.Tech, MBA, B.Com" />
+              <Field label="Field of Study" value={edu.field}
+                onChange={e => setForm(f => ({ ...f, education: arrUpdate(f.education, i, "field", e.target.value) }))}
+                placeholder="e.g. Computer Science" />
+              <Field label="Year of Passing" value={edu.year}
+                onChange={e => setForm(f => ({ ...f, education: arrUpdate(f.education, i, "year", e.target.value) }))}
+                placeholder="e.g. 2023" />
+              <Field label="Grade / CGPA / Percentage" value={edu.grade}
+                onChange={e => setForm(f => ({ ...f, education: arrUpdate(f.education, i, "grade", e.target.value) }))}
+                placeholder="e.g. 8.5 CGPA / 78%" />
+            </div>
+          </Card>
+        ))}
+      </div>
+    );
+
+    if (step === 2 && !isFresher) return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-slate-900 text-base">Work Experience</h3>
+          <Button size="sm" variant="outline" onClick={() => setForm(f => ({ ...f, experience: arrAdd(f.experience, { company: "", title: "", start: "", end: "", current: false, description: "" }) }))}>+ Add</Button>
+        </div>
+        {form.experience.map((exp, i) => (
+          <Card key={i} className="p-4 relative">
+            {form.experience.length > 1 && (
+              <button onClick={() => setForm(f => ({ ...f, experience: arrRemove(f.experience, i) }))}
+                className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg font-bold transition-colors">×</button>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Job Title *" value={exp.title}
+                onChange={e => setForm(f => ({ ...f, experience: arrUpdate(f.experience, i, "title", e.target.value) }))}
+                placeholder="e.g. Software Engineer" />
+              <Field label="Company *" value={exp.company}
+                onChange={e => setForm(f => ({ ...f, experience: arrUpdate(f.experience, i, "company", e.target.value) }))}
+                placeholder="e.g. Infosys Limited" />
+              <Field label="Start Date" value={exp.start}
+                onChange={e => setForm(f => ({ ...f, experience: arrUpdate(f.experience, i, "start", e.target.value) }))}
+                placeholder="e.g. Jan 2022" />
+              <Field label="End Date" value={exp.end}
+                onChange={e => setForm(f => ({ ...f, experience: arrUpdate(f.experience, i, "end", e.target.value) }))}
+                placeholder="e.g. Dec 2023 or Present" />
+              <div className="sm:col-span-2 flex items-center gap-2">
+                <input type="checkbox" checked={exp.current} id={`cur-${i}`}
+                  onChange={e => setForm(f => ({ ...f, experience: arrUpdate(f.experience, i, "current", e.target.checked) }))}
+                  className="rounded text-indigo-600 w-4 h-4" />
+                <label htmlFor={`cur-${i}`} className="text-sm text-slate-600">Currently working here</label>
+              </div>
+              <div className="sm:col-span-2">
+                <Textarea label="Key Responsibilities / Achievements" value={exp.description}
+                  onChange={e => setForm(f => ({ ...f, experience: arrUpdate(f.experience, i, "description", e.target.value) }))}
+                  placeholder="• Led a team of 5 developers to build X feature&#10;• Reduced page load time by 40%&#10;• Managed end-to-end deployment pipeline"
+                  rows={3} />
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    );
+
+    if (step === 2 && isFresher) return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-slate-900 text-base">Projects</h3>
+          <Button size="sm" variant="outline" onClick={() => setForm(f => ({ ...f, projects: arrAdd(f.projects, { name: "", description: "", tech: "", url: "" }) }))}>+ Add</Button>
+        </div>
+        {form.projects.map((proj, i) => (
+          <Card key={i} className="p-4 relative">
+            {form.projects.length > 1 && (
+              <button onClick={() => setForm(f => ({ ...f, projects: arrRemove(f.projects, i) }))}
+                className="absolute top-3 right-3 text-slate-300 hover:text-red-500 text-lg font-bold transition-colors">×</button>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Project Name *" value={proj.name}
+                onChange={e => setForm(f => ({ ...f, projects: arrUpdate(f.projects, i, "name", e.target.value) }))}
+                placeholder="e.g. E-Commerce Website" />
+              <Field label="Technologies Used" value={proj.tech}
+                onChange={e => setForm(f => ({ ...f, projects: arrUpdate(f.projects, i, "tech", e.target.value) }))}
+                placeholder="e.g. React, Node.js, MongoDB" />
+              <Field label="Project URL / GitHub" value={proj.url}
+                onChange={e => setForm(f => ({ ...f, projects: arrUpdate(f.projects, i, "url", e.target.value) }))}
+                placeholder="github.com/yourname/project" className="sm:col-span-2" />
+              <div className="sm:col-span-2">
+                <Textarea label="Project Description" value={proj.description}
+                  onChange={e => setForm(f => ({ ...f, projects: arrUpdate(f.projects, i, "description", e.target.value) }))}
+                  placeholder="Brief description of what the project does, your role and key features…"
+                  rows={2} />
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    );
+
+    if (step === 3) return (
+      <div className="space-y-5">
+        <div>
+          <h3 className="font-bold text-slate-900 text-base mb-3">Skills & Certifications</h3>
+          <div>
+            <label className={labelCls}>Skills (comma-separated) *</label>
+            <input value={form.skillsText}
+              onChange={e => setForm(f => ({ ...f, skillsText: e.target.value }))}
+              placeholder="e.g. JavaScript, Python, SQL, Communication, Problem Solving"
+              className={inputCls} />
+            <p className="text-xs text-slate-400 mt-1">Separate skills with commas</p>
+          </div>
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <label className="text-sm font-bold text-slate-900">Certifications</label>
+            <Button size="sm" variant="outline" onClick={() => setForm(f => ({ ...f, certifications: arrAdd(f.certifications, { name: "", issuer: "", year: "" }) }))}>+ Add</Button>
+          </div>
+          {form.certifications.map((cert, i) => (
+            <div key={i} className="grid grid-cols-3 gap-3 mb-3 items-start">
+              <input value={cert.name} onChange={e => setForm(f => ({ ...f, certifications: arrUpdate(f.certifications, i, "name", e.target.value) }))}
+                placeholder="Certificate name" className={inputCls} />
+              <input value={cert.issuer} onChange={e => setForm(f => ({ ...f, certifications: arrUpdate(f.certifications, i, "issuer", e.target.value) }))}
+                placeholder="Issuer (e.g. Google)" className={inputCls} />
+              <div className="flex gap-2">
+                <input value={cert.year} onChange={e => setForm(f => ({ ...f, certifications: arrUpdate(f.certifications, i, "year", e.target.value) }))}
+                  placeholder="Year" className={inputCls} />
+                {form.certifications.length > 1 && (
+                  <button onClick={() => setForm(f => ({ ...f, certifications: arrRemove(f.certifications, i) }))}
+                    className="text-slate-300 hover:text-red-500 text-lg font-bold px-1 transition-colors">×</button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        {isExperienced && (
+          <div>
+            <label className={labelCls}>Achievements (one per line)</label>
+            <textarea value={form.achievementsText}
+              onChange={e => setForm(f => ({ ...f, achievementsText: e.target.value }))}
+              placeholder="Best Employee of the Quarter – Q3 2023&#10;Published paper in IEEE journal&#10;Won internal hackathon among 200+ participants"
+              rows={3} className={inputCls + " resize-none"} />
+          </div>
+        )}
+        {!isExperienced && resumeType === "creative" && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-sm font-bold text-slate-900">Projects / Portfolio</label>
+              <Button size="sm" variant="outline" onClick={() => setForm(f => ({ ...f, projects: arrAdd(f.projects, { name: "", description: "", tech: "", url: "" }) }))}>+ Add</Button>
+            </div>
+            {form.projects.map((proj, i) => (
+              <div key={i} className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3 p-3 bg-slate-50 rounded-xl">
+                <input value={proj.name} onChange={e => setForm(f => ({ ...f, projects: arrUpdate(f.projects, i, "name", e.target.value) }))}
+                  placeholder="Project name" className={inputCls} />
+                <input value={proj.url} onChange={e => setForm(f => ({ ...f, projects: arrUpdate(f.projects, i, "url", e.target.value) }))}
+                  placeholder="URL / link" className={inputCls} />
+                <input value={proj.tech} onChange={e => setForm(f => ({ ...f, projects: arrUpdate(f.projects, i, "tech", e.target.value) }))}
+                  placeholder="Tools / stack" className={inputCls} />
+                {form.projects.length > 1 && (
+                  <button onClick={() => setForm(f => ({ ...f, projects: arrRemove(f.projects, i) }))}
+                    className="text-xs text-red-500 hover:text-red-700 font-semibold text-left">Remove</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+
+    if (step === 4) return (
+      <div className="space-y-5">
+        <h3 className="font-bold text-slate-900 text-base">Preview & Download</h3>
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+          <p className="font-semibold mb-1">💡 How it works</p>
+          <ul className="space-y-1 text-xs text-blue-700">
+            <li>🔍 <strong>Preview</strong> — Free watermarked DOCX to check layout (no credit deducted)</li>
+            <li>⬇️ <strong>Download</strong> — Clean final DOCX without watermark (1 credit deducted)</li>
+          </ul>
+        </div>
+        {error && <Alert type="error">{error}</Alert>}
+        {success && <Alert type="success">{success}</Alert>}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Card className="p-5 text-center flex flex-col gap-3">
+            <div className="text-4xl">🔍</div>
+            <div className="font-bold text-slate-900">Preview (Free)</div>
+            <p className="text-xs text-slate-500">Watermarked preview to check formatting</p>
+            <Button onClick={generatePreview} loading={generating} disabled={generating || downloading} variant="outline" className="w-full justify-center">
+              {generating ? "Generating…" : "Generate Preview"}
+            </Button>
+            {previewReady && resumeId && (
+              <a href={`/api/resumes/${resumeId}/preview-file?token=${token}`} download
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-all">
+                📥 Download Preview
+              </a>
+            )}
+          </Card>
+          <Card className={`p-5 text-center flex flex-col gap-3 ${(user?.credits || 0) === 0 && user?.role !== "admin" ? "opacity-60" : ""}`}>
+            <div className="text-4xl">⬇️</div>
+            <div className="font-bold text-slate-900">Download Final</div>
+            <p className="text-xs text-slate-500">{user?.role === "admin" ? "Free (admin account)" : "1 credit deducted"}</p>
+            {(user?.credits || 0) === 0 && user?.role !== "admin" ? (
+              <div className="text-xs text-red-600 font-semibold">⚠️ No credits. Please recharge.</div>
+            ) : (
+              <Button onClick={generateDownload} loading={downloading} disabled={generating || downloading} variant="primary" className="w-full justify-center">
+                {downloading ? "Generating…" : "Generate & Download"}
+              </Button>
+            )}
+            {downloadReady && resumeId && (
+              <a href={`/api/resumes/${resumeId}/download-file?token=${token}`} download
+                className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-all">
+                📥 Download Final Resume
+              </a>
+            )}
+          </Card>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      <div className="flex items-center gap-3 mb-5">
+        <button onClick={goBack} className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 font-medium">← My Resumes</button>
+        <div className="flex-1" />
+        <input value={versionName} onChange={e => setVersionName(e.target.value)}
+          className="text-sm font-semibold border border-slate-200 rounded-lg px-3 py-1.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 max-w-44 bg-white"
+          placeholder="Version name" />
+        <Button onClick={saveOnly} loading={saving} variant="outline" size="sm">💾 Save</Button>
+      </div>
+
+      {/* Step indicators */}
+      <div className="flex gap-1 mb-6">
+        {STEPS.map((s, i) => (
+          <button key={i} onClick={() => setStep(i)}
+            className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-colors ${step === i ? "bg-indigo-600 text-white" : i < step ? "bg-indigo-100 text-indigo-700" : "bg-slate-100 text-slate-400"}`}>
+            {s}
+          </button>
+        ))}
+      </div>
+
+      <Card className="p-5">
+        {renderStep()}
+        {error && step !== 4 && <Alert type="error" className="mt-4">{error}</Alert>}
+        {success && step !== 4 && <Alert type="success" className="mt-4">{success}</Alert>}
+        <div className="flex justify-between mt-6 pt-4 border-t border-slate-100">
+          <Button onClick={() => setStep(s => Math.max(0, s - 1))} variant="outline" disabled={step === 0}>← Back</Button>
+          {step < 4 ? (
+            <Button onClick={saveAndContinue} loading={saving} variant="primary">
+              {saving ? "Saving…" : step === 3 ? "Save & Preview →" : "Save & Next →"}
+            </Button>
+          ) : (
+            <Button onClick={goBack} variant="outline">Back to My Resumes</Button>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // ── Admin Login ──────────────────────────────────────────────────────────────
 function AdminLoginPage() {
   const { login } = useAuth();
@@ -2107,6 +2708,7 @@ function AppInner() {
     upload:    <UploadPage setPage={setPage} />,
     templates: <TemplateLibraryPage setPage={setPage} />,
     documents: <DocumentsPage setPage={setPage} />,
+    resume:    <ResumePage />,
     recharge:  <RechargePage />,
     admin:     <AdminPage token={token} />,
   };

@@ -114,3 +114,29 @@ class TemplateFill(BaseModel):
 
 class PlaceholderApproval(BaseModel):
     approved_placeholders: List[Dict[str, Any]]
+
+# ── Resume schemas ────────────────────────────────────────────────────────────
+
+class ResumeCreate(BaseModel):
+    resume_type: str = "fresher"    # fresher | experienced | creative
+    version_name: str = "My Resume"
+    data_json: Optional[str] = None  # JSON string of resume form data
+
+class ResumeUpdate(BaseModel):
+    version_name: Optional[str] = None
+    data_json: Optional[str] = None
+
+class ResumeOut(BaseModel):
+    id: int
+    user_id: int
+    resume_type: str
+    version_name: str
+    data_json: Optional[str]
+    output_path: Optional[str]
+    preview_path: Optional[str]
+    credits_used: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    class Config:
+        from_attributes = True

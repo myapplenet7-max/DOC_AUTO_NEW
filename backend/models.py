@@ -13,6 +13,11 @@ class PaymentStatus(str, enum.Enum):
     approved = "approved"
     rejected = "rejected"
 
+class ResumeType(str, enum.Enum):
+    fresher     = "fresher"
+    experienced = "experienced"
+    creative    = "creative"
+
 CREDIT_PACKS = [
     (10,    1),
     (50,    6),
@@ -54,6 +59,7 @@ class User(Base):
     documents = relationship("Document", back_populates="owner")
     payments  = relationship("Payment",  back_populates="user")
     templates = relationship("Template", back_populates="creator")
+    resumes   = relationship("Resume",   back_populates="owner")
 
 
 class Document(Base):
@@ -112,6 +118,24 @@ class Payment(Base):
     user = relationship("User", back_populates="payments")
 
 
+class Resume(Base):
+    __tablename__ = "resumes"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    user_id      = Column(Integer, ForeignKey("users.id"), nullable=False)
+    resume_type  = Column(Enum(ResumeType), nullable=False, default=ResumeType.fresher)
+    version_name = Column(String, nullable=False, default="My Resume")
+    data_json    = Column(Text, nullable=True)      # JSON blob of resume form data
+    output_path  = Column(String, nullable=True)    # final DOCX
+    preview_path = Column(String, nullable=True)    # watermarked DOCX
+    credits_used = Column(Integer, default=0)
+    status       = Column(String, default="draft")  # draft | generated
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at   = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    owner = relationship("User", back_populates="resumes")
+
+
 class AppSettings(Base):
     """Admin-configurable platform settings stored as key/value pairs."""
     __tablename__ = "app_settings"
@@ -121,10 +145,11 @@ class AppSettings(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-# Default settings — loaded into DB on first startup
 DEFAULT_SETTINGS = {
     "starting_credits":          "5",
     "doc_cost_credits":          "1",
+    "resume_cost_credits":       "1",
+    "resume_types_enabled":      "fresher,experienced,creative",
     "preview_watermark_enabled": "true",
     "preview_watermark_text":    "PREVIEW - DocAuto",
     "similarity_auto_reuse":     "95",

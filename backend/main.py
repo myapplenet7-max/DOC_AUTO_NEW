@@ -2,7 +2,7 @@ import os
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, documents, payments, admin, templates
+from routers import auth, documents, payments, admin, templates, resumes
 from database import engine, Base, SessionLocal
 
 logging.basicConfig(
@@ -25,47 +25,38 @@ def on_startup():
 
 
 def _ensure_admin_exists():
-    import models
+    import models as m
     from auth_utils import hash_password
     db = SessionLocal()
     try:
-        existing_admin = db.query(models.User).filter(
-            models.User.role == models.UserRole.admin
+        existing_admin = db.query(m.User).filter(
+            m.User.role == m.UserRole.admin
         ).first()
-
         if existing_admin:
-            logger.info("✅ Admin user already exists: mobile=%s name=%s",
-                        existing_admin.mobile, existing_admin.name)
+            logger.info("✅ Admin exists: mobile=%s name=%s", existing_admin.mobile, existing_admin.name)
             return
-
-        logger.warning("⚠️  No admin user found — creating default admin account")
-        by_mobile = db.query(models.User).filter(
-            models.User.mobile == ADMIN_MOBILE
-        ).first()
-
+        logger.warning("⚠️  No admin — creating default admin account")
+        by_mobile = db.query(m.User).filter(m.User.mobile == ADMIN_MOBILE).first()
         if by_mobile:
-            by_mobile.role = models.UserRole.admin
+            by_mobile.role = m.UserRole.admin
             by_mobile.is_active = True
             db.commit()
             logger.info("✅ Promoted existing user to admin: mobile=%s", ADMIN_MOBILE)
         else:
-            new_admin = models.User(
+            new_admin = m.User(
                 name=ADMIN_NAME,
                 mobile=ADMIN_MOBILE,
                 email="admin@docauto.in",
                 hashed_password=hash_password(ADMIN_PASSWORD),
-                role=models.UserRole.admin,
+                role=m.UserRole.admin,
                 credits=9999,
                 is_active=True,
             )
             db.add(new_admin)
             db.commit()
-            logger.info(
-                "✅ Default admin created — mobile: %s  password: %s",
-                ADMIN_MOBILE, ADMIN_PASSWORD,
-            )
+            logger.info("✅ Default admin created: mobile=%s password=%s", ADMIN_MOBILE, ADMIN_PASSWORD)
     except Exception as exc:
-        logger.error("❌ Failed to ensure admin exists: %s", exc)
+        logger.error("❌ Failed to ensure admin: %s", exc)
     finally:
         db.close()
 
@@ -83,6 +74,7 @@ app.include_router(documents.router, prefix="/api/documents", tags=["Documents"]
 app.include_router(payments.router,  prefix="/api/payments",  tags=["Payments"])
 app.include_router(admin.router,     prefix="/api/admin",     tags=["Admin"])
 app.include_router(templates.router, prefix="/api/templates", tags=["Templates"])
+app.include_router(resumes.router,   prefix="/api/resumes",   tags=["Resumes"])
 
 
 @app.get("/api/healthz")
