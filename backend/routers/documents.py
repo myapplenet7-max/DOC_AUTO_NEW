@@ -86,12 +86,39 @@ def get_placeholders(
     raw_text = fields.get("raw_text", "")
     placeholders = detect_placeholders(raw_text, fields)
     is_docx = _ext(doc.file_path) in DOCX_EXTS
+
+    from services.ocr_service import detect_document_type
+    doc_type_info = detect_document_type(raw_text)
+
     return {
         "doc_id": doc_id,
         "placeholders": placeholders,
         "raw_text": raw_text,
         "source_is_docx": is_docx,
+        "doc_type": doc_type_info,
     }
+
+
+@router.post("/{doc_id}/rescan")
+def rescan_placeholders(
+    doc_id: int,
+    body: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Second pass: find missing variables not in current placeholder list."""
+    doc = db.query(models.Document).filter(
+        models.Document.id == doc_id, models.Document.user_id == current_user.id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    fields = json.loads(doc.extracted_fields or "{}")
+    raw_text = fields.get("raw_text", "")
+    existing = body.get("existing_placeholders", [])
+
+    from services.ocr_service import rescan_for_missing
+    new_ph = rescan_for_missing(raw_text, existing)
+    return {"new_placeholders": new_ph, "count": len(new_ph)}
 
 
 @router.post("/{doc_id}/approve-placeholders")
@@ -283,12 +310,11 @@ def generate_document(
 
     # ── Format-preserving path ────────────────────────────────────────────────
     if doc.template_path and os.path.exists(doc.template_path):
-        # Get keys from the format-preserved template
         keys = get_placeholder_keys_from_docx(doc.template_path)
         fill_values = {}
         for key in keys:
-            field_key = key.lower()
-            value = fields.get(field_key, "")
+            # Support both uppercase keys (DEPONENT_NAME) and lowercase (deponent_name)
+            value = fields.get(key, "") or fields.get(key.lower(), "") or ""
             fill_values[key] = value
         fill_template_docx(doc.template_path, fill_values, output_path)
     else:

@@ -557,6 +557,138 @@ function ComparisonPanel({ docId, token, showOutput = false, children }) {
   );
 }
 
+// ── Interactive text view with text-selection → variable conversion ──────────
+function InteractiveDocText({ rawText, placeholders, onAddPlaceholder }) {
+  const containerRef = React.useRef(null);
+  const [selInfo, setSelInfo] = React.useState(null); // { text, top, left }
+  const [varName, setVarName] = React.useState("");
+  const [showForm, setShowForm] = React.useState(false);
+  const inputRef = React.useRef(null);
+
+  // Build the "template text" view: replace approved values with {{TOKEN}} marks
+  const buildDisplayHtml = () => {
+    let display = rawText;
+    const sorted = [...placeholders]
+      .filter(p => p.approved && p.value && p.placeholder)
+      .sort((a, b) => b.value.length - a.value.length);
+    for (const ph of sorted) {
+      display = display.split(ph.value).join(`\x00PH:${ph.placeholder}\x00`);
+    }
+    return display;
+  };
+
+  const displayText = buildDisplayHtml();
+
+  const renderLine = (line, lineIdx) => {
+    const parts = line.split('\x00');
+    return (
+      <p key={lineIdx} className="leading-relaxed">
+        {parts.map((part, i) => {
+          if (part.startsWith('PH:')) {
+            const name = part.slice(3);
+            return (
+              <mark key={i} className="bg-blue-100 text-blue-800 px-1 rounded font-mono text-xs font-bold not-italic border border-blue-200">
+                {`{{${name}}}`}
+              </mark>
+            );
+          }
+          return <span key={i}>{part}</span>;
+        })}
+      </p>
+    );
+  };
+
+  const handleMouseUp = () => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) { setSelInfo(null); return; }
+    const selected = sel.toString().trim();
+    if (!selected || selected.length < 2) return;
+    if (!containerRef.current?.contains(sel.anchorNode)) return;
+
+    const range = sel.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const top = rect.bottom - containerRect.top + 6;
+    const left = Math.max(0, rect.left - containerRect.left);
+
+    // Auto-suggest var name from selection
+    const suggested = selected
+      .toUpperCase()
+      .replace(/[^A-Z0-9\s]/g, '')
+      .trim()
+      .replace(/\s+/g, '_')
+      .slice(0, 30);
+
+    setSelInfo({ text: selected, top, left });
+    setVarName(suggested || "VARIABLE_NAME");
+    setShowForm(false);
+  };
+
+  const handleSave = () => {
+    if (!selInfo || !varName.trim()) return;
+    onAddPlaceholder(selInfo.text, varName.trim().toUpperCase().replace(/\s+/g, '_'));
+    setSelInfo(null); setShowForm(false); setVarName("");
+    window.getSelection()?.removeAllRanges();
+  };
+
+  React.useEffect(() => {
+    if (showForm && inputRef.current) inputRef.current.focus();
+  }, [showForm]);
+
+  return (
+    <div className="relative">
+      <div
+        ref={containerRef}
+        onMouseUp={handleMouseUp}
+        className="text-sm leading-7 text-slate-700 whitespace-pre-wrap font-sans select-text p-4 rounded-xl bg-slate-50 border border-slate-200 max-h-72 overflow-y-auto"
+        style={{ userSelect: "text" }}
+      >
+        {displayText.split('\n').map((line, i) => renderLine(line, i))}
+      </div>
+
+      {selInfo && (
+        <div
+          className="absolute z-20 bg-slate-900 text-white rounded-xl shadow-2xl p-3 text-xs"
+          style={{ top: selInfo.top, left: Math.min(selInfo.left, 200), minWidth: 240, maxWidth: 320 }}
+        >
+          <div className="mb-2 text-slate-300 truncate">
+            Selected: <span className="text-white font-medium">"{selInfo.text.slice(0, 35)}{selInfo.text.length > 35 ? "…" : ""}"</span>
+          </div>
+          {!showForm ? (
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowForm(true)}
+                className="flex-1 bg-indigo-500 hover:bg-indigo-400 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+              >
+                Convert to Variable →
+              </button>
+              <button onClick={() => setSelInfo(null)} className="text-slate-400 hover:text-white px-2">✕</button>
+            </div>
+          ) : (
+            <div>
+              <div className="text-slate-300 mb-1">Variable name:</div>
+              <input
+                ref={inputRef}
+                value={varName}
+                onChange={e => setVarName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
+                onKeyDown={e => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setSelInfo(null); }}
+                className="w-full px-2 py-1 rounded-lg text-slate-900 text-xs font-mono mb-2 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                placeholder="e.g. CHILD_NAME"
+              />
+              <div className="flex gap-2">
+                <button onClick={handleSave} className="flex-1 bg-emerald-500 hover:bg-emerald-400 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors">
+                  ✓ Save as {`{{${varName || "NAME"}}}`}
+                </button>
+                <button onClick={() => setSelInfo(null)} className="text-slate-400 hover:text-white px-2">✕</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UploadPage({ setPage }) {
   const { token, refreshUser, user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -566,9 +698,12 @@ function UploadPage({ setPage }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
-  const [editedFields, setEditedFields] = useState({});
   const [placeholders, setPlaceholders] = useState([]);
   const [rawText, setRawText] = useState("");
+  const [docType, setDocType] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanMsg, setScanMsg] = useState("");
+  const [fillValues, setFillValues] = useState({});
   const [generating, setGenerating] = useState(false);
   const [generated, setGenerated] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
@@ -578,8 +713,11 @@ function UploadPage({ setPage }) {
   const [templateCategory, setTemplateCategory] = useState("Custom Templates");
   const [templateDesc, setTemplateDesc] = useState("");
   const [hasFormatTemplate, setHasFormatTemplate] = useState(false);
+  const [showManualAdd, setShowManualAdd] = useState(false);
+  const [manualText, setManualText] = useState("");
+  const [manualKey, setManualKey] = useState("");
 
-  const STEPS = ["Upload", "Review AI Fields", "Compare & Fill", "Download"];
+  const STEPS = ["Upload", "Review Variables", "Fill & Generate", "Download"];
 
   const upload = async () => {
     if (!file) return;
@@ -588,11 +726,10 @@ function UploadPage({ setPage }) {
       const fd = new FormData(); fd.append("file", file);
       const data = await apiFetch("/documents/upload", { method: "POST", body: fd }, token);
       setResult(data);
-      const fields = JSON.parse(data.extracted_fields || "{}");
-      setEditedFields(Object.fromEntries(Object.entries(fields).filter(([k]) => k !== "raw_text")));
       const phData = await apiFetch(`/documents/${data.id}/placeholders`, {}, token);
       setPlaceholders(phData.placeholders || []);
       setRawText(phData.raw_text || "");
+      setDocType(phData.doc_type || null);
       setTemplateName(file.name.replace(/\.[^.]+$/, ""));
       await refreshUser();
       setStep(1);
@@ -600,14 +737,59 @@ function UploadPage({ setPage }) {
     setLoading(false);
   };
 
+  const rescan = async () => {
+    if (!result) return;
+    setScanning(true); setScanMsg(""); setError("");
+    try {
+      const currentApproved = placeholders.filter(p => p.approved);
+      const data = await apiFetch(`/documents/${result.id}/rescan`, {
+        method: "POST",
+        body: JSON.stringify({ existing_placeholders: currentApproved }),
+      }, token);
+      const newPhs = (data.new_placeholders || []).map(p => ({ ...p, approved: false }));
+      if (newPhs.length === 0) {
+        setScanMsg("No additional variables found.");
+      } else {
+        setPlaceholders(prev => [...prev, ...newPhs]);
+        setScanMsg(`Found ${newPhs.length} more possible variable${newPhs.length === 1 ? "" : "s"} — review below.`);
+      }
+    } catch (e) { setError(e.message); }
+    setScanning(false);
+  };
+
+  const addCustomPlaceholder = (text, key) => {
+    // Don't add duplicates
+    if (placeholders.some(p => p.value === text || p.placeholder === key)) return;
+    const newPh = {
+      key: key.toLowerCase(),
+      placeholder: key,
+      value: text,
+      confidence: 1.0,
+      category: "Manual",
+      approved: true,
+    };
+    setPlaceholders(prev => [...prev, newPh]);
+  };
+
+  const addManualVariable = () => {
+    if (!manualText.trim() || !manualKey.trim()) return;
+    addCustomPlaceholder(manualText.trim(), manualKey.trim().toUpperCase().replace(/\s+/g, "_"));
+    setManualText(""); setManualKey(""); setShowManualAdd(false);
+  };
+
   const approveAndContinue = async () => {
     setLoading(true); setError("");
     try {
+      const approved = placeholders.filter(p => p.approved);
       const res = await apiFetch(`/documents/${result.id}/approve-placeholders`, {
         method: "POST",
-        body: JSON.stringify({ approved_placeholders: placeholders }),
+        body: JSON.stringify({ approved_placeholders: approved }),
       }, token);
       setHasFormatTemplate(res.has_format_preserved_template || false);
+      // Pre-fill the values with detected values as defaults
+      const defaults = {};
+      approved.forEach(ph => { defaults[ph.placeholder] = ph.value || ""; });
+      setFillValues(defaults);
       setStep(2);
     } catch (e) { setError(e.message); }
     setLoading(false);
@@ -616,7 +798,10 @@ function UploadPage({ setPage }) {
   const generate = async () => {
     setGenerating(true); setError("");
     try {
-      await apiFetch(`/documents/${result.id}/fields`, { method: "PUT", body: JSON.stringify({ fields: editedFields }) }, token);
+      await apiFetch(`/documents/${result.id}/fields`, {
+        method: "PUT",
+        body: JSON.stringify({ fields: fillValues }),
+      }, token);
       await apiFetch(`/documents/${result.id}/generate`, { method: "POST" }, token);
       setGenerated(true);
       setStep(3);
@@ -632,16 +817,17 @@ function UploadPage({ setPage }) {
         method: "POST",
         body: JSON.stringify({ name: templateName, category: templateCategory, description: templateDesc }),
       }, token);
-      setTemplateSaved(true);
-      setShowSaveModal(false);
+      setTemplateSaved(true); setShowSaveModal(false);
     } catch (e) { setError(e.message); }
     setSavingTemplate(false);
   };
 
   const resetAll = () => {
-    setStep(0); setFile(null); setResult(null); setEditedFields({});
-    setPlaceholders([]); setRawText(""); setGenerated(false); setTemplateSaved(false);
-    setError(""); setShowSaveModal(false); setHasFormatTemplate(false);
+    setStep(0); setFile(null); setResult(null); setFillValues({});
+    setPlaceholders([]); setRawText(""); setDocType(null);
+    setGenerated(false); setTemplateSaved(false); setError("");
+    setShowSaveModal(false); setHasFormatTemplate(false);
+    setScanMsg(""); setShowManualAdd(false);
   };
 
   const togglePlaceholder = (idx) => {
@@ -649,21 +835,27 @@ function UploadPage({ setPage }) {
   };
 
   const updatePlaceholderName = (idx, name) => {
-    setPlaceholders(prev => prev.map((p, i) => i === idx ? { ...p, placeholder: name.toUpperCase().replace(/\s+/g, "_") } : p));
+    setPlaceholders(prev => prev.map((p, i) => i === idx ? { ...p, placeholder: name.toUpperCase().replace(/[^A-Z0-9_]/g, '_') } : p));
   };
 
+  const removePlaceholder = (idx) => {
+    setPlaceholders(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const approvedPhs = placeholders.filter(p => p.approved);
+  const suggestedPhs = placeholders.filter(p => !p.approved);
   const isWideStep = step === 2 || step === 3;
 
   return (
     <div className={isWideStep ? "w-full max-w-none" : "max-w-2xl mx-auto"}>
       <div className="mb-5">
         <h2 className="text-xl lg:text-2xl font-bold text-slate-900">Upload & Extract</h2>
-        <p className="text-slate-500 text-sm mt-1">Format-preserving document automation for Telugu & English.</p>
+        <p className="text-slate-500 text-sm mt-1">Format-preserving document automation for Telugu & English legal documents.</p>
       </div>
 
       <StepIndicator steps={STEPS} current={step} />
 
-      {/* Step 0 — Upload */}
+      {/* ── Step 0 — Upload ─────────────────────────────────────────────────── */}
       {step === 0 && (
         <div className="max-w-2xl mx-auto">
           {!isAdmin && (user?.credits || 0) === 0 && (
@@ -694,10 +886,14 @@ function UploadPage({ setPage }) {
           </div>
           {error && <Alert type="error" className="mt-4">{error}</Alert>}
           <Button loading={loading} disabled={!file || (!isAdmin && (user?.credits || 0) === 0)} onClick={upload} className="mt-4 w-full justify-center" size="lg">
-            <Icons.Ai />{isAdmin ? "Extract & Detect Fields (Free)" : "Extract & Detect Fields (1 credit)"}
+            <Icons.Ai />{isAdmin ? "Extract & Detect Variables (Free)" : "Extract & Detect Variables (1 credit)"}
           </Button>
           <div className="mt-5 grid grid-cols-3 gap-3 text-center">
-            {[["🔒", "Format Preserved", "DOCX layout kept intact"], ["🤖", "AI Detection", "25+ field types auto-detected"], ["🔄", "Reusable", "Save as template for future use"]].map(([icon, title, desc]) => (
+            {[
+              ["🔒", "Format Preserved", "DOCX layout kept 95–100% intact"],
+              ["🤖", "Type-Aware AI", "Detects doc type, extracts only relevant fields"],
+              ["✏️", "Manual Select", "Tap any text to convert it to a variable"],
+            ].map(([icon, title, desc]) => (
               <div key={title} className="p-3 bg-white rounded-xl border border-slate-100">
                 <div className="text-2xl mb-1">{icon}</div>
                 <div className="text-xs font-bold text-slate-700">{title}</div>
@@ -708,65 +904,177 @@ function UploadPage({ setPage }) {
         </div>
       )}
 
-      {/* Step 1 — Review AI-detected placeholders */}
+      {/* ── Step 1 — Review & Refine Variables ──────────────────────────────── */}
       {step === 1 && (
-        <div className="max-w-2xl mx-auto">
-          <Alert type="info" className="mb-5">
-            <strong>AI detected {placeholders.length} variable fields.</strong> Review and approve them — approved fields become <code className="font-mono bg-indigo-100 px-1 rounded">{"{{PLACEHOLDER}}"}</code> tokens in your format-preserved template.
-            {result?.file_path?.endsWith(".docx") && (
-              <div className="mt-2 text-emerald-700 font-semibold text-xs">✅ DOCX detected — full format preservation enabled (fonts, tables, margins, headers, footers)</div>
-            )}
-          </Alert>
+        <div className="max-w-2xl mx-auto space-y-4">
 
-          {placeholders.length === 0 ? (
-            <Alert type="warning" className="mb-4">No variable fields were automatically detected. You can still edit fields in the next step.</Alert>
-          ) : (
-            <div className="space-y-2 mb-5">
-              {["Person Details", "Identity", "Location", "Property", "Legal", "Financial", "Dates", "Contact"].map(cat => {
-                const catItems = placeholders.filter(p => p.category === cat);
-                if (!catItems.length) return null;
-                return (
-                  <div key={cat}>
-                    <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 mt-4">{cat}</div>
-                    {catItems.map((ph, globalIdx) => {
-                      const idx = placeholders.indexOf(ph);
-                      return (
-                        <div key={idx} className={`flex items-start gap-3 p-3 rounded-xl border mb-2 transition-all ${ph.approved ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white opacity-60"}`}>
-                          <button onClick={() => togglePlaceholder(idx)} className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center border-2 shrink-0 transition-colors ${ph.approved ? "bg-emerald-500 border-emerald-500 text-white" : "border-slate-300"}`}>
-                            {ph.approved && <Icons.Check />}
-                          </button>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <input
-                                value={ph.placeholder}
-                                onChange={e => updatePlaceholderName(idx, e.target.value)}
-                                className="font-mono text-xs px-2 py-1 rounded bg-indigo-50 border border-indigo-200 text-indigo-800 font-bold focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                                style={{ minWidth: "120px", width: `${ph.placeholder.length + 4}ch` }}
-                              />
-                              <Badge color={CONFIDENCE_COLOR(ph.confidence)}>{Math.round(ph.confidence * 100)}% confidence</Badge>
-                            </div>
-                            <div className="text-xs text-slate-500 mt-1 truncate">Detected: <span className="font-medium text-slate-700">{ph.value}</span></div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
+          {/* Document type badge */}
+          {docType && (
+            <div className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-xl">
+              <span className="text-2xl">{docType.emoji || "📄"}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-bold text-slate-900">
+                  {docType.display}
+                  <span className="ml-2 text-xs font-normal text-slate-400">
+                    {Math.round((docType.confidence || 0) * 100)}% confidence
+                  </span>
+                </div>
+                <div className="text-xs text-slate-500">Document type detected — only relevant fields are suggested</div>
+              </div>
+              <Badge color="blue">{docType.type?.replace(/_/g, ' ')}</Badge>
             </div>
           )}
 
-          {error && <Alert type="error" className="mb-4">{error}</Alert>}
-          <div className="flex gap-3 flex-wrap">
+          {/* Interactive text view */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest">Document Preview</div>
+              <div className="text-xs text-indigo-600 font-medium">💡 Select any text → Convert to Variable</div>
+            </div>
+            <InteractiveDocText
+              rawText={rawText}
+              placeholders={placeholders}
+              onAddPlaceholder={addCustomPlaceholder}
+            />
+          </div>
+
+          {/* Confirmed variables */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                Detected Variables ({approvedPhs.length})
+              </div>
+              <button
+                onClick={rescan}
+                disabled={scanning}
+                className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-50 border border-indigo-200 rounded-lg px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+              >
+                {scanning ? "🔄 Scanning…" : "🔄 Scan Again for Missing"}
+              </button>
+            </div>
+
+            {scanMsg && (
+              <div className={`text-xs px-3 py-2 rounded-lg mb-2 ${scanMsg.includes("No additional") ? "bg-slate-100 text-slate-600" : "bg-indigo-50 text-indigo-700 font-medium"}`}>
+                {scanMsg}
+              </div>
+            )}
+
+            {approvedPhs.length === 0 ? (
+              <div className="text-xs text-slate-500 p-3 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                No variables confirmed yet. Select text above, check suggestions below, or add manually.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {approvedPhs.map((ph) => {
+                  const idx = placeholders.indexOf(ph);
+                  return (
+                    <div key={idx} className="flex items-center gap-2 p-2.5 rounded-xl border border-emerald-200 bg-emerald-50">
+                      <span className="text-emerald-500 text-sm">✓</span>
+                      <div className="flex-1 min-w-0">
+                        <input
+                          value={ph.placeholder}
+                          onChange={e => updatePlaceholderName(idx, e.target.value)}
+                          className="font-mono text-xs px-2 py-0.5 rounded bg-white border border-emerald-200 text-emerald-800 font-bold focus:outline-none focus:ring-1 focus:ring-emerald-400 w-full"
+                        />
+                        <div className="text-xs text-slate-500 mt-0.5 truncate">
+                          {ph.category === "Manual" ? "👆 Manually added:" : "Detected:"} <span className="text-slate-700">{ph.value}</span>
+                        </div>
+                      </div>
+                      <button onClick={() => togglePlaceholder(idx)} className="text-slate-300 hover:text-red-400 text-sm px-1" title="Remove">✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* AI Suggestions (not yet approved) */}
+          {suggestedPhs.length > 0 && (
+            <div>
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">
+                AI Suggestions — Tap to add ({suggestedPhs.length})
+              </div>
+              <div className="space-y-2">
+                {suggestedPhs.map((ph) => {
+                  const idx = placeholders.indexOf(ph);
+                  return (
+                    <div key={idx} className="flex items-center gap-2 p-2.5 rounded-xl border border-dashed border-slate-300 bg-white hover:bg-slate-50 transition-colors">
+                      <button
+                        onClick={() => togglePlaceholder(idx)}
+                        className="w-5 h-5 rounded border-2 border-slate-300 hover:border-indigo-400 flex items-center justify-center shrink-0 transition-colors"
+                        title="Approve this variable"
+                      >
+                        <span className="text-xs text-slate-400">+</span>
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs text-indigo-700 font-bold">{`{{${ph.placeholder}}}`}</span>
+                          <Badge color={CONFIDENCE_COLOR(ph.confidence)} className="text-xs">{ph.category}</Badge>
+                        </div>
+                        <div className="text-xs text-slate-500 truncate mt-0.5">{ph.value}</div>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <button
+                          onClick={() => togglePlaceholder(idx)}
+                          className="text-xs bg-indigo-500 text-white px-2 py-1 rounded-lg hover:bg-indigo-600 transition-colors font-medium"
+                        >
+                          Add
+                        </button>
+                        <button onClick={() => removePlaceholder(idx)} className="text-slate-300 hover:text-red-400 text-sm px-1">✕</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Manual add variable */}
+          <div className="border border-dashed border-slate-300 rounded-xl p-3">
+            {!showManualAdd ? (
+              <button
+                onClick={() => setShowManualAdd(true)}
+                className="w-full text-sm text-slate-500 hover:text-indigo-600 flex items-center justify-center gap-2 py-1 transition-colors"
+              >
+                <span className="text-lg">+</span> Add Variable Manually
+              </button>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-xs font-bold text-slate-600 mb-1">Add Variable Manually</div>
+                <input
+                  value={manualText}
+                  onChange={e => setManualText(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Exact text from document (e.g. BUDDEBAIGARI DADAVALLI)"
+                />
+                <input
+                  value={manualKey}
+                  onChange={e => setManualKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Variable name (e.g. CHILD_NAME)"
+                  onKeyDown={e => { if (e.key === "Enter") addManualVariable(); }}
+                />
+                <div className="flex gap-2">
+                  <Button onClick={addManualVariable} disabled={!manualText.trim() || !manualKey.trim()} variant="primary" size="sm">
+                    Add {manualKey ? `{{${manualKey}}}` : "Variable"}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => { setShowManualAdd(false); setManualText(""); setManualKey(""); }}>Cancel</Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {error && <Alert type="error">{error}</Alert>}
+          <div className="flex gap-3 flex-wrap pt-2">
             <Button loading={loading} onClick={approveAndContinue} variant="primary" size="lg">
-              Continue with {placeholders.filter(p => p.approved).length} approved fields →
+              Confirm {approvedPhs.length} Variable{approvedPhs.length !== 1 ? "s" : ""} & Fill Form →
             </Button>
-            <Button variant="ghost" onClick={() => setStep(2)}>Skip to fill form</Button>
+            <Button variant="ghost" onClick={() => setStep(0)}>← Back</Button>
           </div>
         </div>
       )}
 
-      {/* Step 2 — Three-panel: Original | Template | Fill Form */}
+      {/* ── Step 2 — Three-panel: Original | Template | Fill Form ───────────── */}
       {step === 2 && (
         <div>
           {hasFormatTemplate && (
@@ -775,25 +1083,36 @@ function UploadPage({ setPage }) {
             </div>
           )}
           <div className="mb-3 text-xs text-slate-500 hidden lg:flex items-center gap-4">
-            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-500 inline-block"></span> Original — your uploaded file</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-600 inline-block"></span> Original — your uploaded file</span>
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span> Template — <span className="text-blue-700 font-mono text-xs">{"{{PLACEHOLDERS}}"}</span> highlighted</span>
-            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500 inline-block"></span> Fill in the values on the right</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500 inline-block"></span> Fill in only the {approvedPhs.length} detected field{approvedPhs.length !== 1 ? "s" : ""}</span>
           </div>
 
           <ComparisonPanel docId={result.id} token={token} showOutput={false}>
             <div className="p-4 space-y-3">
-              <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Document Fields</div>
-              {Object.entries(FIELD_LABELS).map(([key, label]) => (
-                <div key={key}>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">{label}</label>
-                  <input
-                    value={editedFields[key] || ""}
-                    onChange={e => setEditedFields(f => ({ ...f, [key]: e.target.value }))}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                    placeholder={`Enter ${label.toLowerCase()}`}
-                  />
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
+                Fill in Values — {approvedPhs.length} field{approvedPhs.length !== 1 ? "s" : ""}
+              </div>
+              {approvedPhs.length === 0 ? (
+                <div className="text-sm text-slate-500 p-3 bg-slate-50 rounded-xl">
+                  No variables were approved. <button onClick={() => setStep(1)} className="text-indigo-600 underline">← Go back</button> and approve at least one.
                 </div>
-              ))}
+              ) : (
+                approvedPhs.map((ph) => (
+                  <div key={ph.placeholder}>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">
+                      {ph.placeholder.replace(/_/g, ' ')}
+                      {ph.category && <span className="ml-2 text-slate-400 font-normal">({ph.category})</span>}
+                    </label>
+                    <input
+                      value={fillValues[ph.placeholder] ?? ph.value ?? ""}
+                      onChange={e => setFillValues(f => ({ ...f, [ph.placeholder]: e.target.value }))}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                      placeholder={ph.value || ph.placeholder.replace(/_/g, ' ').toLowerCase()}
+                    />
+                  </div>
+                ))
+              )}
             </div>
           </ComparisonPanel>
 
@@ -802,12 +1121,12 @@ function UploadPage({ setPage }) {
             <Button loading={generating} onClick={generate} variant="success" size="lg">
               <Icons.File /> Generate Format-Preserved DOCX
             </Button>
-            <Button variant="ghost" onClick={() => setStep(1)}>← Back</Button>
+            <Button variant="ghost" onClick={() => setStep(1)}>← Back to Variables</Button>
           </div>
         </div>
       )}
 
-      {/* Step 3 — Three-panel comparison: Original | Template | Output */}
+      {/* ── Step 3 — Three-panel: Original | Template | Output ──────────────── */}
       {step === 3 && (
         <div>
           <div className="mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -837,7 +1156,7 @@ function UploadPage({ setPage }) {
           <div className="mb-3 text-xs text-slate-500 hidden lg:flex items-center gap-4">
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-500 inline-block"></span> Original document</span>
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block"></span> Template with placeholders</span>
-            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> Generated output — verify it matches original layout</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> Generated output — verify layout matches</span>
           </div>
 
           <ComparisonPanel docId={result.id} token={token} showOutput={true} />
@@ -848,7 +1167,7 @@ function UploadPage({ setPage }) {
                 <Icons.Save /> Save to Template Library
               </h4>
               <div className="space-y-3">
-                <Input label="Template Name *" value={templateName} onChange={e => setTemplateName(e.target.value)} placeholder="e.g. Property Affidavit" />
+                <Input label="Template Name *" value={templateName} onChange={e => setTemplateName(e.target.value)} placeholder="e.g. Birth Affidavit" />
                 <Select label="Category" value={templateCategory} onChange={e => setTemplateCategory(e.target.value)}>
                   {CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_ICONS[c]} {c}</option>)}
                 </Select>
