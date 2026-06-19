@@ -1,7 +1,10 @@
 import os
 import logging
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from routers import auth, documents, payments, admin, templates, resumes
 from database import engine, Base, SessionLocal
 
@@ -14,6 +17,8 @@ logger = logging.getLogger("docauto")
 ADMIN_MOBILE   = os.getenv("ADMIN_MOBILE",   "9999999999")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD",  "Admin@123")
 ADMIN_NAME     = os.getenv("ADMIN_NAME",      "Admin")
+
+FRONTEND_DIST = Path("/home/runner/workspace/artifacts/docauto/dist/public")
 
 app = FastAPI(title="DocAuto API", version="2.0.0")
 
@@ -82,6 +87,20 @@ def healthz():
     return {"status": "ok"}
 
 
-@app.get("/")
-def root():
-    return {"message": "DocAuto API v2 is running"}
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+
+    @app.get("/")
+    def serve_index():
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
+
+    @app.get("/{full_path:path}")
+    def serve_spa(full_path: str):
+        file_path = FRONTEND_DIST / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
+else:
+    @app.get("/")
+    def root():
+        return {"message": "DocAuto API v2 is running"}
