@@ -584,7 +584,33 @@ def detect_placeholders(raw_text: str, detected_fields: dict = None) -> list:
 
         add(suggested_key.lower(), suggested_key, text, conf, category)
 
-    return placeholders
+    # ── Final dedup pass: case-insensitive name, keep longer value ────────────
+    # Safety net: collapse any remaining duplicates that slipped through the
+    # per-call checks above (can happen when the same placeholder name is
+    # emitted by two different detection passes with slightly different values).
+    seen_ph: dict[str, int] = {}  # normalised_placeholder_name → index in final list
+    deduped: list = []
+    for ph in placeholders:
+        norm = ph["placeholder"].upper()
+        if norm in seen_ph:
+            existing_idx = seen_ph[norm]
+            existing = deduped[existing_idx]
+            # Replace with the longer / higher-confidence value
+            if (len(ph["value"]) > len(existing["value"]) or
+                    ph["confidence"] > existing["confidence"]):
+                deduped[existing_idx] = ph
+        else:
+            seen_ph[norm] = len(deduped)
+            deduped.append(ph)
+
+    if len(deduped) < len(placeholders):
+        import logging as _log
+        _log.getLogger("docauto.ocr").info(
+            "detect_placeholders: final dedup removed %d duplicate(s) (%d → %d)",
+            len(placeholders) - len(deduped), len(placeholders), len(deduped),
+        )
+
+    return deduped
 
 
 def _contextual_name_key(phrase: str, full_text: str, existing: list, category: str) -> str:
@@ -695,25 +721,32 @@ def rescan_for_missing(raw_text: str, existing_placeholders: list) -> list:
     """
     Second pass: re-run detection ignoring already-tagged values.
     Returns NEW placeholders not already in existing_placeholders.
+
+    Uses case-insensitive name comparison so that e.g. "AMOUNT" from the
+    first pass correctly blocks "amount" (or vice-versa) from being returned
+    as a duplicate by the rescan.
     """
     existing_values = {p["value"] for p in existing_placeholders}
-    existing_placeholders_strs = {p["placeholder"] for p in existing_placeholders}
+    # Normalise to uppercase for case-insensitive name comparison
+    existing_ph_names_upper = {p["placeholder"].upper() for p in existing_placeholders}
 
-    # Remove already-detected values from the text before rescanning
+    # Mask already-detected values in the text so they don't trigger again
     text_for_scan = raw_text
     for val in sorted(existing_values, key=len, reverse=True):
         if val and len(val) > 2:
             text_for_scan = text_for_scan.replace(val, "____ALREADY_TAGGED____")
 
-    # Run detection on cleaned text
+    # Run detection on the masked text
     new_ph = detect_placeholders(text_for_scan, {})
 
-    # Filter out any that match existing placeholders or have low confidence
+    # Filter: skip if name already exists (case-insensitive) or value is masked
     results = []
     for ph in new_ph:
-        if ph["placeholder"] not in existing_placeholders_strs and ph["value"] != "____ALREADY_TAGGED____":
-            if "ALREADY_TAGGED" not in ph["value"]:
-                results.append(ph)
+        if ph["placeholder"].upper() in existing_ph_names_upper:
+            continue
+        if "ALREADY_TAGGED" in ph["value"]:
+            continue
+        results.append(ph)
 
     return results
 

@@ -806,8 +806,17 @@ function UploadPage({ setPage }) {
       if (newPhs.length === 0) {
         setScanMsg("No additional variables found.");
       } else {
-        setPlaceholders(prev => [...prev, ...newPhs]);
-        setScanMsg(`Found ${newPhs.length} more possible variable${newPhs.length === 1 ? "" : "s"} — review below.`);
+        setPlaceholders(prev => {
+          // Deduplicate: skip any returned placeholder whose name already exists
+          const existingNames = new Set(prev.map(p => p.placeholder?.toUpperCase()));
+          const truly_new = newPhs.filter(p => !existingNames.has(p.placeholder?.toUpperCase()));
+          if (truly_new.length === 0) {
+            setScanMsg("No additional variables found.");
+            return prev;
+          }
+          setScanMsg(`Found ${truly_new.length} more possible variable${truly_new.length === 1 ? "" : "s"} — review below.`);
+          return [...prev, ...truly_new];
+        });
       }
     } catch (e) { setError(e.message); }
     setScanning(false);
