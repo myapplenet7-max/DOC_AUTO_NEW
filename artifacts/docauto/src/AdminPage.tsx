@@ -275,6 +275,118 @@ function UserRow({ user, token, onUpdated }) {
   );
 }
 
+function SettingsPanel({ token }) {
+  const [settings, setSettings] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    apiFetch("/admin/settings", {}, token)
+      .then(setSettings)
+      .catch(e => setError(e.message));
+  }, []);
+
+  const update = (key, value) => setSettings(s => ({ ...s, [key]: value }));
+
+  const save = async () => {
+    setSaving(true); setMsg(""); setError("");
+    try {
+      await apiFetch("/admin/settings", {
+        method: "PUT",
+        body: JSON.stringify(settings),
+      }, token);
+      setMsg("Settings saved successfully.");
+      setTimeout(() => setMsg(""), 3000);
+    } catch (e) { setError(e.message); }
+    setSaving(false);
+  };
+
+  if (!settings) return <div className="flex justify-center py-12 text-slate-400"><Spinner /></div>;
+
+  const field = (label, key, type = "text", hint = "") => (
+    <div className="flex flex-col gap-1">
+      <label className="text-sm font-semibold text-slate-700">{label}</label>
+      {type === "toggle" ? (
+        <button
+          onClick={() => update(key, settings[key] === "true" ? "false" : "true")}
+          className={`w-12 h-6 rounded-full transition-colors relative ${settings[key] === "true" ? "bg-indigo-600" : "bg-slate-300"}`}
+        >
+          <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${settings[key] === "true" ? "translate-x-6" : "translate-x-0.5"}`} />
+        </button>
+      ) : (
+        <input
+          type={type}
+          value={settings[key] || ""}
+          onChange={e => update(key, e.target.value)}
+          className="w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 max-w-xs"
+        />
+      )}
+      {hint && <span className="text-xs text-slate-400">{hint}</span>}
+    </div>
+  );
+
+  return (
+    <div className="max-w-2xl space-y-6">
+      {error && <Alert type="error">{error}</Alert>}
+      {msg && <Alert type="success">{msg}</Alert>}
+
+      <Card className="p-5">
+        <h3 className="font-bold text-slate-900 mb-4">💳 Credit Settings</h3>
+        <div className="space-y-4">
+          {field("Starting Credits (new users)", "starting_credits", "number", "Credits given to each new user on registration")}
+          {field("Download Cost (credits per document)", "doc_cost_credits", "number", "Credits deducted per generated document")}
+          {field("UPI ID", "upi_id", "text", "UPI ID shown to users for payment")}
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <h3 className="font-bold text-slate-900 mb-4">🔒 Preview & Watermark</h3>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold text-slate-700">Preview Watermark</div>
+              <div className="text-xs text-slate-400">Show watermark on document previews</div>
+            </div>
+            {field("", "preview_watermark_enabled", "toggle")}
+          </div>
+          {settings.preview_watermark_enabled === "true" &&
+            field("Watermark Text", "preview_watermark_text", "text", "Text shown on preview documents")}
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <h3 className="font-bold text-slate-900 mb-4">🤖 Similarity Thresholds</h3>
+        <div className="text-xs text-slate-500 mb-4">Controls when templates are reused vs. new analysis is triggered</div>
+        <div className="space-y-4">
+          {field("Auto-Reuse Threshold (%)", "similarity_auto_reuse", "number", "Above this % — automatically reuse existing template")}
+          {field("Ask User Threshold (%)", "similarity_ask_user", "number", "Between this % and auto-reuse — ask user to confirm reuse")}
+        </div>
+        <div className="mt-3 bg-slate-50 rounded-xl p-3 text-xs text-slate-500 space-y-1">
+          <div>• <strong>{settings.similarity_auto_reuse}%+</strong> → Automatic reuse</div>
+          <div>• <strong>{settings.similarity_ask_user}%–{settings.similarity_auto_reuse}%</strong> → Ask user</div>
+          <div>• <strong>Below {settings.similarity_ask_user}%</strong> → Fresh analysis</div>
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <h3 className="font-bold text-slate-900 mb-4">📤 Upload Settings</h3>
+        <div className="space-y-4">
+          {field("Max Upload Size (MB)", "max_upload_mb", "number", "Maximum file size allowed for uploads")}
+        </div>
+      </Card>
+
+      <button
+        onClick={save}
+        disabled={saving}
+        className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-xl font-semibold text-sm hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
+      >
+        {saving ? <Spinner /> : "💾"} {saving ? "Saving…" : "Save All Settings"}
+      </button>
+    </div>
+  );
+}
+
 export default function AdminPage({ token }) {
   const [tab, setTab] = useState("payments");
   const [payments, setPayments] = useState([]);
@@ -308,15 +420,17 @@ export default function AdminPage({ token }) {
           <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center text-xl">🛡️</div>
           <div>
             <h2 className="text-xl lg:text-2xl font-bold text-slate-900">Admin Panel</h2>
-            <p className="text-slate-500 text-sm">Manage users, payments and platform stats</p>
+            <p className="text-slate-500 text-sm">Manage users, payments and platform settings</p>
           </div>
         </div>
-        <button
-          onClick={load}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200 hover:bg-slate-50 transition-all"
-        >
-          🔄 Refresh
-        </button>
+        {tab !== "settings" && (
+          <button
+            onClick={load}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200 hover:bg-slate-50 transition-all"
+          >
+            🔄 Refresh
+          </button>
+        )}
       </div>
 
       {error && <Alert type="error" className="mb-5">{error}</Alert>}
@@ -325,14 +439,14 @@ export default function AdminPage({ token }) {
       {stats && (
         <div className="grid grid-cols-2 gap-3 mb-6 sm:grid-cols-4">
           {[
-            { label: "Total Users",    value: stats.total_users,      icon: "👤", color: "bg-blue-50 text-blue-700" },
-            { label: "Documents",      value: stats.total_documents,   icon: "📄", color: "bg-slate-50 text-slate-700" },
-            { label: "Pending",        value: stats.pending_payments,  icon: "⏳", color: stats.pending_payments > 0 ? "bg-amber-50 text-amber-700" : "bg-slate-50 text-slate-700" },
-            { label: "Total Revenue",  value: `₹${stats.total_revenue}`, icon: "💰", color: "bg-emerald-50 text-emerald-700" },
+            { label: "Total Users",    value: stats.total_users,        icon: "👤", color: "text-blue-700" },
+            { label: "Documents",      value: stats.total_documents,    icon: "📄", color: "text-slate-700" },
+            { label: "Templates",      value: stats.total_templates,    icon: "📚", color: "text-purple-700" },
+            { label: "Total Revenue",  value: `₹${stats.total_revenue}`, icon: "💰", color: "text-emerald-700" },
           ].map(s => (
             <Card key={s.label} className="p-4 text-center">
-              <div className="text-3xl mb-1">{s.icon}</div>
-              <div className={`text-xl font-black ${s.color.split(" ")[1]}`}>{s.value}</div>
+              <div className="text-2xl mb-1">{s.icon}</div>
+              <div className={`text-xl font-black ${s.color}`}>{s.value}</div>
               <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
             </Card>
           ))}
@@ -340,10 +454,11 @@ export default function AdminPage({ token }) {
       )}
 
       {/* Tabs */}
-      <div className="flex bg-slate-100 rounded-xl p-1 mb-6 w-fit gap-1">
+      <div className="flex bg-slate-100 rounded-xl p-1 mb-6 gap-1 flex-wrap">
         {[
-          { id: "payments", label: `Pending Payments (${payments.length})` },
+          { id: "payments", label: `Payments (${payments.length})` },
           { id: "users",    label: `Users (${users.length})` },
+          { id: "settings", label: "⚙️ Settings" },
         ].map(t => (
           <button
             key={t.id}
@@ -356,7 +471,9 @@ export default function AdminPage({ token }) {
       </div>
 
       {/* Content */}
-      {loading ? (
+      {tab === "settings" ? (
+        <SettingsPanel token={token} />
+      ) : loading ? (
         <div className="flex items-center gap-3 text-slate-500 py-12 justify-center">
           <Spinner /> Loading…
         </div>

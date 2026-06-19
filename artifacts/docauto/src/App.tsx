@@ -177,16 +177,19 @@ function StepIndicator({ steps, current }) {
 }
 
 const CATEGORY_ICONS = {
-  "Affidavit":         "📜",
-  "Sale Deed":         "🏠",
-  "Court Documents":   "⚖️",
-  "Agreements":        "🤝",
-  "Rental Agreements": "🔑",
-  "GPA":               "📋",
-  "Legal Notices":     "📢",
-  "Certificates":      "🎓",
-  "Government Forms":  "🏛️",
-  "Custom Templates":  "📄",
+  "Affidavit":              "📜",
+  "Sale Deed":              "🏠",
+  "Agricultural Sale Deed": "🌾",
+  "Court Documents":        "⚖️",
+  "Agreements":             "🤝",
+  "Rental Agreements":      "🔑",
+  "GPA":                    "📋",
+  "Will":                   "📝",
+  "Gift Deed":              "🎁",
+  "Legal Notices":          "📢",
+  "Certificates":           "🎓",
+  "Government Forms":       "🏛️",
+  "Custom Templates":       "📄",
 };
 
 const CATEGORIES = Object.keys(CATEGORY_ICONS);
@@ -1194,7 +1197,9 @@ function TemplateLibraryPage({ setPage }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("");
+  const [sortBy, setSortBy] = useState("recent"); // recent | most_used | favorites
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [selected, setSelected] = useState(null);
   const [fillFields, setFillFields] = useState({});
   const [fillSchema, setFillSchema] = useState(null);
@@ -1207,6 +1212,7 @@ function TemplateLibraryPage({ setPage }) {
   const [editDesc, setEditDesc] = useState("");
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
   const [newTemplateMode, setNewTemplateMode] = useState(false);
   const [newName, setNewName] = useState("");
   const [newCat, setNewCat] = useState("Custom Templates");
@@ -1215,6 +1221,7 @@ function TemplateLibraryPage({ setPage }) {
 
   const load = async () => {
     setLoading(true);
+    setError("");
     try {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
@@ -1226,6 +1233,12 @@ function TemplateLibraryPage({ setPage }) {
   };
 
   useEffect(() => { load(); }, [search, filterCat]);
+
+  const sortedTemplates = [...templates].sort((a, b) => {
+    if (sortBy === "most_used") return b.use_count - a.use_count;
+    if (sortBy === "favorites") return (b.is_favorite ? 1 : 0) - (a.is_favorite ? 1 : 0);
+    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+  });
 
   const openTemplate = async (tmpl) => {
     setSelected(tmpl);
@@ -1244,6 +1257,7 @@ function TemplateLibraryPage({ setPage }) {
 
   const fillAndDownload = async () => {
     setFilling(true);
+    setError("");
     try {
       await apiFetch(`/templates/${selected.id}/fill`, {
         method: "POST",
@@ -1260,6 +1274,25 @@ function TemplateLibraryPage({ setPage }) {
       if (selected?.id === id) setSelected(null);
       setDeleteConfirm(null);
       load();
+    } catch (e) { setError(e.message); }
+  };
+
+  const duplicateTemplate = async (tmpl) => {
+    setDuplicating(true);
+    try {
+      const copy = await apiFetch(`/templates/${tmpl.id}/duplicate`, { method: "POST" }, token);
+      setSuccess(`"${copy.name}" created.`);
+      setTimeout(() => setSuccess(""), 3000);
+      load();
+    } catch (e) { setError(e.message); }
+    setDuplicating(false);
+  };
+
+  const toggleFavorite = async (tmpl) => {
+    try {
+      const r = await apiFetch(`/templates/${tmpl.id}/favorite`, { method: "PATCH" }, token);
+      setTemplates(prev => prev.map(t => t.id === tmpl.id ? { ...t, is_favorite: r.is_favorite } : t));
+      if (selected?.id === tmpl.id) setSelected(s => ({ ...s, is_favorite: r.is_favorite }));
     } catch (e) { setError(e.message); }
   };
 
@@ -1300,23 +1333,24 @@ function TemplateLibraryPage({ setPage }) {
     setSaving(false);
   };
 
-  const PLACEHOLDER_HINT = `Example template:\n\nI, {{FULL_NAME}}, S/o {{FATHER_NAME}},\nresident of {{ADDRESS}}, {{VILLAGE}},\n{{MANDAL}} Mandal, {{DISTRICT}} District,\ndo hereby solemnly affirm that...`;
+  const PLACEHOLDER_HINT = `Example:\n\nI, {{FULL_NAME}}, S/o {{FATHER_NAME}},\nresident of {{ADDRESS}}, {{VILLAGE}},\n{{MANDAL}} Mandal, {{DISTRICT}} District,\ndo hereby solemnly affirm that...`;
 
   return (
     <div className="max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6 gap-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5 gap-4 flex-wrap">
         <div>
-          <h2 className="text-xl lg:text-2xl font-bold text-slate-900">Template Library</h2>
-          <p className="text-slate-500 text-sm mt-1">{templates.length} saved template{templates.length !== 1 ? "s" : ""}</p>
+          <h2 className="text-xl lg:text-2xl font-bold text-slate-900">📚 Template Library</h2>
+          <p className="text-slate-500 text-sm mt-1">{templates.length} template{templates.length !== 1 ? "s" : ""} · reusable, unlimited fills</p>
         </div>
         <Button onClick={() => { setNewTemplateMode(true); setSelected(null); }} variant="primary">
           <Icons.Plus /> New Template
         </Button>
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-3 mb-5 flex-col sm:flex-row">
-        <div className="relative flex-1">
+      {/* Filters + Sort */}
+      <div className="flex gap-2 mb-5 flex-wrap">
+        <div className="relative flex-1 min-w-[160px]">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Icons.Search /></span>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search templates…" className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         </div>
@@ -1324,20 +1358,26 @@ function TemplateLibraryPage({ setPage }) {
           <option value="">All Categories</option>
           {CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_ICONS[c]} {c}</option>)}
         </select>
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="px-3 py-2.5 rounded-lg border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <option value="recent">Recent</option>
+          <option value="most_used">Most Used</option>
+          <option value="favorites">⭐ Favorites</option>
+        </select>
       </div>
 
       {error && <Alert type="error" className="mb-4">{error}</Alert>}
+      {success && <Alert type="success" className="mb-4">{success}</Alert>}
 
       {/* New template form */}
       {newTemplateMode && (
         <Card className="p-5 mb-5 border-2 border-indigo-200">
           <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2"><Icons.Plus /> Create New Template</h3>
           <div className="space-y-3">
-            <Input label="Template Name *" value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Affidavit - Property" />
+            <Input label="Template Name *" value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Birth Affidavit - Standard" />
             <Select label="Category" value={newCat} onChange={e => setNewCat(e.target.value)}>
               {CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_ICONS[c]} {c}</option>)}
             </Select>
-            <Input label="Description (optional)" value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="Brief description" />
+            <Input label="Description (optional)" value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="Brief description of this template" />
             <Textarea
               label="Template Content * (use {{FIELD_NAME}} for placeholders)"
               value={newContent}
@@ -1360,26 +1400,38 @@ function TemplateLibraryPage({ setPage }) {
         <div className="lg:col-span-1">
           {loading ? (
             <div className="flex items-center justify-center py-12 text-slate-400"><Icons.Spinner /></div>
-          ) : templates.length === 0 ? (
+          ) : sortedTemplates.length === 0 ? (
             <Card className="p-10 text-center text-slate-400">
               <div className="text-4xl mb-3">📚</div>
               <div className="font-semibold text-slate-600">No templates yet</div>
-              <div className="text-sm mt-1">Upload documents to create templates, or create one manually above.</div>
+              <div className="text-sm mt-1">Upload documents and save templates, or create one manually.</div>
             </Card>
           ) : (
-            <div className="space-y-2">
-              {templates.map(t => (
+            <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-1">
+              {sortedTemplates.map(t => (
                 <button
                   key={t.id}
                   onClick={() => openTemplate(t)}
-                  className={`w-full text-left p-4 rounded-xl border transition-all ${selected?.id === t.id ? "border-indigo-400 bg-indigo-50 shadow-sm" : "border-slate-200 bg-white hover:border-indigo-200 hover:bg-slate-50"}`}
+                  className={`w-full text-left p-3.5 rounded-xl border transition-all ${selected?.id === t.id ? "border-indigo-400 bg-indigo-50 shadow-sm" : "border-slate-200 bg-white hover:border-indigo-200 hover:bg-slate-50"}`}
                 >
-                  <div className="flex items-start gap-3">
-                    <div className="text-2xl shrink-0">{CATEGORY_ICONS[t.category] || "📄"}</div>
-                    <div className="min-w-0">
-                      <div className="font-semibold text-slate-900 text-sm truncate">{t.name}</div>
+                  <div className="flex items-start gap-2.5">
+                    <div className="text-xl shrink-0 mt-0.5">{CATEGORY_ICONS[t.category] || "📄"}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="font-semibold text-slate-900 text-sm truncate">{t.name}</span>
+                        {t.is_favorite && <span className="text-amber-400 text-xs">⭐</span>}
+                      </div>
                       <div className="text-xs text-slate-400 mt-0.5">{t.category}</div>
-                      {t.use_count > 0 && <div className="text-xs text-indigo-500 mt-1">Used {t.use_count} time{t.use_count !== 1 ? "s" : ""}</div>}
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        {t.use_count > 0 && (
+                          <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-medium">
+                            Used {t.use_count}×
+                          </span>
+                        )}
+                        {t.source_doc_id && (
+                          <span className="text-xs bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">AI</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </button>
@@ -1391,9 +1443,10 @@ function TemplateLibraryPage({ setPage }) {
         {/* Template detail / fill */}
         <div className="lg:col-span-2">
           {!selected && !newTemplateMode && (
-            <Card className="p-12 text-center text-slate-400 h-full flex flex-col items-center justify-center">
+            <Card className="p-12 text-center text-slate-400 flex flex-col items-center justify-center min-h-[300px]">
               <div className="text-5xl mb-4">📋</div>
               <div className="font-semibold text-slate-500">Select a template to fill and download</div>
+              <div className="text-sm mt-1">Templates can be reused unlimited times</div>
             </Card>
           )}
 
@@ -1401,14 +1454,19 @@ function TemplateLibraryPage({ setPage }) {
             <Card className="p-5">
               {editMode ? (
                 <div>
-                  <h3 className="font-bold text-slate-900 mb-4">Edit Template</h3>
+                  <div className="flex items-center gap-2 mb-4">
+                    <button onClick={() => setEditMode(false)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+                    </button>
+                    <h3 className="font-bold text-slate-900">Edit Template</h3>
+                  </div>
                   <div className="space-y-3">
                     <Input label="Name" value={editName} onChange={e => setEditName(e.target.value)} />
                     <Select label="Category" value={editCat} onChange={e => setEditCat(e.target.value)}>
                       {CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_ICONS[c]} {c}</option>)}
                     </Select>
                     <Input label="Description" value={editDesc} onChange={e => setEditDesc(e.target.value)} />
-                    <Textarea label="Template Content" value={editContent} onChange={e => setEditContent(e.target.value)} rows={12} />
+                    <Textarea label="Template Content (use {{FIELD_NAME}} for placeholders)" value={editContent} onChange={e => setEditContent(e.target.value)} rows={14} />
                   </div>
                   <div className="flex gap-3 mt-4">
                     <Button loading={saving} onClick={saveEdit} variant="primary"><Icons.Save /> Save Changes</Button>
@@ -1417,21 +1475,36 @@ function TemplateLibraryPage({ setPage }) {
                 </div>
               ) : (
                 <div>
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <h3 className="font-bold text-slate-900 text-lg">{CATEGORY_ICONS[selected.category]} {selected.name}</h3>
-                      <div className="text-xs text-slate-400 mt-1">{selected.category} · Used {selected.use_count} times</div>
+                  {/* Header row */}
+                  <div className="flex items-start justify-between mb-4 gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xl">{CATEGORY_ICONS[selected.category]}</span>
+                        <h3 className="font-bold text-slate-900 text-base lg:text-lg">{selected.name}</h3>
+                        {selected.is_favorite && <span className="text-amber-400">⭐</span>}
+                      </div>
+                      <div className="text-xs text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
+                        <span>{selected.category}</span>
+                        <span>·</span>
+                        <span className="font-semibold text-indigo-600">Used {selected.use_count} time{selected.use_count !== 1 ? "s" : ""}</span>
+                        {selected.source_doc_id && <Badge color="teal">AI Generated</Badge>}
+                      </div>
                       {selected.description && <div className="text-sm text-slate-500 mt-1">{selected.description}</div>}
                     </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => startEdit(selected)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"><Icons.Edit /></button>
-                      <button onClick={() => setDeleteConfirm(selected.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Icons.Trash /></button>
+                    {/* Action buttons */}
+                    <div className="flex gap-1 shrink-0">
+                      <button title={selected.is_favorite ? "Remove from favorites" : "Add to favorites"} onClick={() => toggleFavorite(selected)} className={`p-2 rounded-lg transition-colors ${selected.is_favorite ? "text-amber-400 hover:bg-amber-50" : "text-slate-300 hover:text-amber-400 hover:bg-amber-50"}`}>⭐</button>
+                      <button title="Edit template" onClick={() => startEdit(selected)} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"><Icons.Edit /></button>
+                      <button title="Duplicate template" disabled={duplicating} onClick={() => duplicateTemplate(selected)} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                      </button>
+                      <button title="Delete template" onClick={() => setDeleteConfirm(selected.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Icons.Trash /></button>
                     </div>
                   </div>
 
                   {deleteConfirm === selected.id && (
                     <Alert type="error" className="mb-4">
-                      <div className="font-semibold mb-2">Delete this template?</div>
+                      <div className="font-semibold mb-2">Delete "{selected.name}"? This cannot be undone.</div>
                       <div className="flex gap-2">
                         <Button variant="danger" size="sm" onClick={() => deleteTemplate(selected.id)}>Yes, Delete</Button>
                         <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
@@ -1439,21 +1512,23 @@ function TemplateLibraryPage({ setPage }) {
                     </Alert>
                   )}
 
-                  {/* Download template DOCX */}
-                  <div className="mb-4">
+                  {/* Quick actions bar */}
+                  <div className="flex gap-2 mb-5 flex-wrap border-t border-slate-100 pt-4">
                     <button
                       onClick={() => window.open(`${API}/templates/${selected.id}/download-template?token=${token}`, "_blank")}
-                      className="text-xs text-indigo-600 hover:underline flex items-center gap-1"
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                     >
-                      <Icons.Download /> Download template DOCX (with placeholders)
+                      <Icons.Download /> Download Template DOCX
                     </button>
                   </div>
 
                   {/* Fill form */}
                   {fillSchema?.fields?.length > 0 ? (
                     <div>
-                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Fill Template Fields</div>
-                      <div className="space-y-2 mb-4">
+                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
+                        Fill Template — {fillSchema.fields.length} field{fillSchema.fields.length !== 1 ? "s" : ""}
+                      </div>
+                      <div className="space-y-2.5 mb-5 max-h-[40vh] overflow-y-auto pr-1">
                         {fillSchema.fields.map(f => (
                           <div key={f.key}>
                             <label className="block text-xs font-semibold text-slate-500 mb-1">{f.label}</label>
@@ -1487,7 +1562,9 @@ function TemplateLibraryPage({ setPage }) {
                             <Button onClick={() => window.open(`${API}/templates/${selected.id}/download-filled?token=${token}`, "_blank")} variant="primary">
                               <Icons.Download /> Download Filled DOCX
                             </Button>
-                            <Button variant="ghost" onClick={() => { setFilled(false); setFillFields({}); (fillSchema?.fields || []).forEach(f => setFillFields(prev => ({ ...prev, [f.key]: "" }))); }}>Fill Again</Button>
+                            <Button variant="ghost" onClick={() => { setFilled(false); const init={}; (fillSchema?.fields||[]).forEach(f=>{init[f.key]="";}); setFillFields(init); }}>
+                              Fill Again
+                            </Button>
                           </>
                         )}
                       </div>
@@ -1495,8 +1572,8 @@ function TemplateLibraryPage({ setPage }) {
                   ) : (
                     <div>
                       <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Template Preview</div>
-                      <pre className="text-xs text-slate-600 bg-slate-50 rounded-xl p-4 overflow-auto max-h-64 whitespace-pre-wrap font-sans border border-slate-100">{selected.template_content}</pre>
-                      <div className="mt-3 text-sm text-slate-400">No variable placeholders in this template. Download as-is.</div>
+                      <pre className="text-xs text-slate-600 bg-slate-50 rounded-xl p-4 overflow-auto max-h-64 whitespace-pre-wrap font-sans border border-slate-100">{selected.template_content?.substring(0, 800)}{selected.template_content?.length > 800 ? "…" : ""}</pre>
+                      <div className="mt-3 text-sm text-slate-400">No variable placeholders detected. Download as-is or edit to add fields.</div>
                       <Button onClick={() => window.open(`${API}/templates/${selected.id}/download-template?token=${token}`, "_blank")} variant="secondary" className="mt-3">
                         <Icons.Download /> Download Template
                       </Button>
@@ -1513,64 +1590,263 @@ function TemplateLibraryPage({ setPage }) {
 }
 
 // ── Documents List ───────────────────────────────────────────────────────────
-function DocumentsPage() {
+function DocumentsPage({ setPage }) {
   const { token } = useAuth();
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [expanded, setExpanded] = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [creatingTemplate, setCreatingTemplate] = useState(null);
+  const [searchDoc, setSearchDoc] = useState("");
 
-  useEffect(() => {
-    apiFetch("/documents/", {}, token).then(setDocs).catch(e => setError(e.message)).finally(() => setLoading(false));
-  }, []);
+  const load = () => {
+    setLoading(true);
+    apiFetch("/documents/", {}, token)
+      .then(setDocs)
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
 
   const statusBadge = s => {
-    const map = { uploaded: ["slate", "Uploaded"], processed: ["blue", "Processed"], downloaded: ["green", "Generated"] };
+    const map = {
+      uploaded:   ["slate",  "Uploaded"],
+      processed:  ["blue",   "Processed"],
+      downloaded: ["green",  "Generated"],
+    };
     const [c, l] = map[s] || ["slate", s];
     return <Badge color={c}>{l}</Badge>;
   };
+
+  const deleteDoc = async (id) => {
+    try {
+      await apiFetch(`/documents/${id}`, { method: "DELETE" }, token);
+      setDeleteConfirm(null);
+      if (expanded === id) setExpanded(null);
+      setDocs(prev => prev.filter(d => d.id !== id));
+      setSuccess("Document deleted.");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (e) { setError(e.message); }
+  };
+
+  const createTemplate = async (doc) => {
+    setCreatingTemplate(doc.id);
+    setError("");
+    try {
+      const r = await apiFetch(`/documents/${doc.id}/create-template`, { method: "POST" }, token);
+      if (r.already_existed) {
+        setSuccess(`Template already exists: "${r.name}"`);
+      } else {
+        setSuccess(`Template saved to library: "${r.name}"`);
+      }
+      setTimeout(() => setSuccess(""), 4000);
+      load();
+    } catch (e) { setError(e.message); }
+    setCreatingTemplate(null);
+  };
+
+  const filtered = docs.filter(d =>
+    !searchDoc || d.original_filename.toLowerCase().includes(searchDoc.toLowerCase()) ||
+    (d.doc_type || "").toLowerCase().includes(searchDoc.toLowerCase())
+  );
 
   if (loading) return <div className="flex items-center gap-3 text-slate-500 py-12 justify-center"><Icons.Spinner /> Loading…</div>;
 
   return (
     <div className="max-w-3xl mx-auto">
-      <div className="mb-6">
-        <h2 className="text-xl lg:text-2xl font-bold text-slate-900">My Documents</h2>
-        <p className="text-slate-500 text-sm mt-1">{docs.length} document{docs.length !== 1 ? "s" : ""} processed</p>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5 gap-4 flex-wrap">
+        <div>
+          <h2 className="text-xl lg:text-2xl font-bold text-slate-900">📂 My Documents</h2>
+          <p className="text-slate-500 text-sm mt-1">{docs.length} document{docs.length !== 1 ? "s" : ""} processed</p>
+        </div>
+        <Button onClick={() => setPage("upload")} variant="primary"><Icons.Upload /> Upload New</Button>
       </div>
+
+      {/* Search */}
+      {docs.length > 3 && (
+        <div className="relative mb-4">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><Icons.Search /></span>
+          <input value={searchDoc} onChange={e => setSearchDoc(e.target.value)} placeholder="Search by filename or type…" className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+      )}
+
       {error && <Alert type="error" className="mb-4">{error}</Alert>}
-      {docs.length === 0 ? (
+      {success && <Alert type="success" className="mb-4">{success}</Alert>}
+
+      {filtered.length === 0 ? (
         <Card className="p-16 text-center text-slate-400">
           <div className="text-5xl mb-4">📄</div>
-          <div className="font-semibold text-slate-600">No documents yet</div>
-          <div className="text-sm mt-1">Upload your first document to get started</div>
+          <div className="font-semibold text-slate-600">{docs.length === 0 ? "No documents yet" : "No documents match your search"}</div>
+          <div className="text-sm mt-1">{docs.length === 0 ? "Upload your first document to get started" : "Try a different search term"}</div>
+          {docs.length === 0 && <Button onClick={() => setPage("upload")} variant="primary" className="mt-5"><Icons.Upload /> Upload Document</Button>}
         </Card>
       ) : (
         <div className="flex flex-col gap-3">
-          {docs.map(doc => (
-            <Card key={doc.id} className="p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-slate-500 shrink-0"><Icons.File /></div>
-                  <div className="min-w-0">
+          {filtered.map(doc => {
+            const isExpanded = expanded === doc.id;
+            const hasOutput = !!doc.output_path;
+            const hasTemplate = !!doc.template_content;
+            const docTypeLabel = doc.doc_type || "Document";
+
+            return (
+              <Card key={doc.id} className={`overflow-hidden transition-all ${isExpanded ? "shadow-md" : ""}`}>
+                {/* Main row */}
+                <div
+                  className="p-4 flex items-center gap-3 cursor-pointer hover:bg-slate-50 transition-colors"
+                  onClick={() => setExpanded(isExpanded ? null : doc.id)}
+                >
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${hasOutput ? "bg-emerald-100 text-emerald-600" : "bg-slate-100 text-slate-500"}`}>
+                    <Icons.File />
+                  </div>
+                  <div className="min-w-0 flex-1">
                     <div className="font-semibold text-slate-900 text-sm truncate">{doc.original_filename}</div>
                     <div className="text-xs text-slate-400 mt-0.5 flex flex-wrap items-center gap-1.5">
                       <span>{new Date(doc.created_at).toLocaleDateString("en-IN")}</span>
                       <span>·</span>
-                      {doc.credits_used === 0 ? <span className="text-purple-600 font-medium">Admin</span> : <span>{doc.credits_used} credit</span>}
+                      <span className="text-slate-500">{docTypeLabel}</span>
+                      <span>·</span>
+                      {doc.credits_used === 0 ? <span className="text-purple-600 font-medium">Admin</span> : <span>{doc.credits_used} credit{doc.credits_used !== 1 ? "s" : ""}</span>}
                       <span>·</span>
                       {statusBadge(doc.status)}
-                      {doc.template_content && <Badge color="purple">Template ready</Badge>}
                     </div>
                   </div>
+                  {/* Quick download */}
+                  {hasOutput && (
+                    <button
+                      onClick={e => { e.stopPropagation(); window.open(`${API}/documents/${doc.id}/download?token=${token}`, "_blank"); }}
+                      className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors shrink-0"
+                      title="Download DOCX"
+                    >
+                      <Icons.Download />
+                    </button>
+                  )}
+                  <span className={`text-slate-400 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4"><polyline points="6 9 12 15 18 9"/></svg>
+                  </span>
                 </div>
-                {doc.output_path && (
-                  <button onClick={() => window.open(`${API}/documents/${doc.id}/download?token=${token}`, "_blank")} className="p-2.5 text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors shrink-0" title="Download DOCX">
-                    <Icons.Download />
-                  </button>
+
+                {/* Expanded detail */}
+                {isExpanded && (
+                  <div className="border-t border-slate-100 bg-slate-50 p-4">
+                    {/* Three file states */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                      {/* Original */}
+                      <div className="bg-white rounded-xl p-3 border border-slate-200">
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">📥 Original</div>
+                        <div className="text-xs text-slate-600 truncate mb-2">{doc.original_filename}</div>
+                        <a
+                          href={`${API}/documents/${doc.id}/preview-original?token=${token}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-indigo-600 hover:underline flex items-center gap-1"
+                        >
+                          <Icons.Eye /> Preview
+                        </a>
+                      </div>
+
+                      {/* Template */}
+                      <div className={`bg-white rounded-xl p-3 border ${hasTemplate ? "border-purple-200" : "border-slate-200"}`}>
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">📋 Template</div>
+                        {hasTemplate ? (
+                          <>
+                            <div className="text-xs text-emerald-600 font-semibold mb-2">✓ Ready</div>
+                            <a
+                              href={`${API}/documents/${doc.id}/preview-template?token=${token}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-indigo-600 hover:underline flex items-center gap-1"
+                            >
+                              <Icons.Eye /> Preview
+                            </a>
+                          </>
+                        ) : (
+                          <div className="text-xs text-slate-400">Not created yet</div>
+                        )}
+                      </div>
+
+                      {/* Output */}
+                      <div className={`bg-white rounded-xl p-3 border ${hasOutput ? "border-emerald-200" : "border-slate-200"}`}>
+                        <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">📄 Output</div>
+                        {hasOutput ? (
+                          <>
+                            <div className="text-xs text-emerald-600 font-semibold mb-2">✓ Generated</div>
+                            <a
+                              href={`${API}/documents/${doc.id}/preview-output?token=${token}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-indigo-600 hover:underline flex items-center gap-1"
+                            >
+                              <Icons.Eye /> Preview
+                            </a>
+                          </>
+                        ) : (
+                          <div className="text-xs text-slate-400">Not generated yet</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex flex-wrap gap-2">
+                      {hasOutput && (
+                        <button
+                          onClick={() => window.open(`${API}/documents/${doc.id}/download?token=${token}`, "_blank")}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                        >
+                          <Icons.Download /> Download DOCX
+                        </button>
+                      )}
+                      {hasTemplate && (
+                        <button
+                          disabled={creatingTemplate === doc.id}
+                          onClick={() => createTemplate(doc)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50"
+                        >
+                          <Icons.Template />
+                          {creatingTemplate === doc.id ? "Saving…" : "Save to Library"}
+                        </button>
+                      )}
+                      {hasTemplate && (
+                        <button
+                          onClick={() => { setPage("templates"); }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
+                        >
+                          🔄 Reuse Template
+                        </button>
+                      )}
+                      {!hasOutput && (
+                        <button
+                          onClick={() => setPage("upload")}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors"
+                        >
+                          <Icons.Upload /> Continue Processing
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setDeleteConfirm(doc.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors ml-auto"
+                      >
+                        <Icons.Trash /> Delete
+                      </button>
+                    </div>
+
+                    {deleteConfirm === doc.id && (
+                      <Alert type="error" className="mt-3">
+                        <div className="font-semibold mb-2">Delete "{doc.original_filename}"? This cannot be undone.</div>
+                        <div className="flex gap-2">
+                          <Button variant="danger" size="sm" onClick={() => deleteDoc(doc.id)}>Yes, Delete</Button>
+                          <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
+                        </div>
+                      </Alert>
+                    )}
+                  </div>
                 )}
-              </div>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1830,7 +2106,7 @@ function AppInner() {
     dashboard: <Dashboard setPage={setPage} />,
     upload:    <UploadPage setPage={setPage} />,
     templates: <TemplateLibraryPage setPage={setPage} />,
-    documents: <DocumentsPage />,
+    documents: <DocumentsPage setPage={setPage} />,
     recharge:  <RechargePage />,
     admin:     <AdminPage token={token} />,
   };

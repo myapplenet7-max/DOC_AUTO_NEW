@@ -91,6 +91,7 @@ class TemplateUpdate(BaseModel):
     description: Optional[str] = None
     template_content: Optional[str] = None
     field_schema: Optional[str] = None
+    is_favorite: Optional[bool] = None
 
 class TemplateOut(BaseModel):
     id: int
@@ -102,6 +103,7 @@ class TemplateOut(BaseModel):
     field_schema: Optional[str]
     source_doc_id: Optional[int]
     use_count: int
+    is_favorite: bool = False
     created_at: datetime
     updated_at: datetime
     class Config:

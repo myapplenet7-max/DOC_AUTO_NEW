@@ -15,6 +15,49 @@ except Exception:
     def notify_user_payment_rejected(*a, **kw): pass
 
 
+# ── Helper: get a setting value with fallback to DEFAULT_SETTINGS ─────────────
+def get_setting(db: Session, key: str) -> str:
+    row = db.query(models.AppSettings).filter(models.AppSettings.key == key).first()
+    if row:
+        return row.value
+    return models.DEFAULT_SETTINGS.get(key, "")
+
+
+# ── Settings endpoints ────────────────────────────────────────────────────────
+
+@router.get("/settings")
+def get_all_settings(db: Session = Depends(get_db), _=Depends(require_admin)):
+    rows = db.query(models.AppSettings).all()
+    result = dict(models.DEFAULT_SETTINGS)  # start with defaults
+    for row in rows:
+        result[row.key] = row.value
+    return result
+
+
+@router.put("/settings")
+def update_settings(
+    data: dict,
+    db: Session = Depends(get_db),
+    _=Depends(require_admin),
+):
+    allowed = set(models.DEFAULT_SETTINGS.keys())
+    updated = []
+    for key, value in data.items():
+        if key not in allowed:
+            continue
+        row = db.query(models.AppSettings).filter(models.AppSettings.key == key).first()
+        if row:
+            row.value = str(value)
+        else:
+            row = models.AppSettings(key=key, value=str(value))
+            db.add(row)
+        updated.append(key)
+    db.commit()
+    return {"updated": updated}
+
+
+# ── Payment endpoints ─────────────────────────────────────────────────────────
+
 @router.get("/payments/pending", response_model=list[schemas.PaymentOut])
 def pending_payments(db: Session = Depends(get_db), _=Depends(require_admin)):
     return db.query(models.Payment).filter(
@@ -88,6 +131,8 @@ def review_payment(
     return payment
 
 
+# ── User management ───────────────────────────────────────────────────────────
+
 @router.get("/users", response_model=list[schemas.UserOut])
 def list_users(db: Session = Depends(get_db), _=Depends(require_admin)):
     return db.query(models.User).order_by(models.User.created_at.desc()).all()
@@ -110,11 +155,13 @@ def adjust_credits(
 def stats(db: Session = Depends(get_db), _=Depends(require_admin)):
     total_users  = db.query(models.User).count()
     total_docs   = db.query(models.Document).count()
+    total_tmpls  = db.query(models.Template).count()
     pending      = db.query(models.Payment).filter(models.Payment.status == models.PaymentStatus.pending).count()
     revenue_rows = db.query(models.Payment).filter(models.Payment.status == models.PaymentStatus.approved).with_entities(models.Payment.amount).all()
     return {
         "total_users": total_users,
         "total_documents": total_docs,
+        "total_templates": total_tmpls,
         "pending_payments": pending,
         "total_revenue": sum(r[0] for r in revenue_rows),
     }

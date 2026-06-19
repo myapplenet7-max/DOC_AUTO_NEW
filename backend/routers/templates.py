@@ -99,6 +99,8 @@ def update_template(
     if data.template_content is not None:
         tmpl.template_content = data.template_content
         tmpl.field_schema = build_field_schema(data.template_content)
+    if data.is_favorite is not None:
+        tmpl.is_favorite = data.is_favorite
     db.commit(); db.refresh(tmpl)
     return tmpl
 
@@ -117,6 +119,51 @@ def delete_template(
         raise HTTPException(status_code=404, detail="Template not found")
     db.delete(tmpl); db.commit()
     return {"ok": True}
+
+
+@router.post("/{tmpl_id}/duplicate", response_model=schemas.TemplateOut)
+def duplicate_template(
+    tmpl_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Create a copy of a template with '(Copy)' suffix."""
+    tmpl = db.query(models.Template).filter(
+        models.Template.id == tmpl_id,
+        models.Template.user_id == current_user.id,
+    ).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    copy = models.Template(
+        user_id=current_user.id,
+        name=f"{tmpl.name} (Copy)",
+        category=tmpl.category,
+        description=tmpl.description,
+        template_content=tmpl.template_content,
+        field_schema=tmpl.field_schema,
+        source_doc_id=tmpl.source_doc_id,
+        use_count=0,
+    )
+    db.add(copy); db.commit(); db.refresh(copy)
+    return copy
+
+
+@router.patch("/{tmpl_id}/favorite")
+def toggle_favorite(
+    tmpl_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    tmpl = db.query(models.Template).filter(
+        models.Template.id == tmpl_id,
+        models.Template.user_id == current_user.id,
+    ).first()
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    tmpl.is_favorite = not tmpl.is_favorite
+    db.commit()
+    return {"is_favorite": tmpl.is_favorite}
 
 
 @router.get("/{tmpl_id}/fields")

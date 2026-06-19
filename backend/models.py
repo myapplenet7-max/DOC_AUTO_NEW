@@ -25,10 +25,13 @@ DOC_COST_CREDITS = 1
 TEMPLATE_CATEGORIES = [
     "Affidavit",
     "Sale Deed",
+    "Agricultural Sale Deed",
     "Court Documents",
     "Agreements",
     "Rental Agreements",
     "GPA",
+    "Will",
+    "Gift Deed",
     "Legal Notices",
     "Certificates",
     "Government Forms",
@@ -85,6 +88,7 @@ class Template(Base):
     field_schema     = Column(Text,   nullable=True)
     source_doc_id    = Column(Integer, ForeignKey("documents.id"), nullable=True)
     use_count        = Column(Integer, default=0)
+    is_favorite      = Column(Boolean, default=False)
     created_at       = Column(DateTime(timezone=True), server_default=func.now())
     updated_at       = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -106,3 +110,25 @@ class Payment(Base):
     reviewed_at     = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="payments")
+
+
+class AppSettings(Base):
+    """Admin-configurable platform settings stored as key/value pairs."""
+    __tablename__ = "app_settings"
+
+    key        = Column(String, primary_key=True)
+    value      = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# Default settings — loaded into DB on first startup
+DEFAULT_SETTINGS = {
+    "starting_credits":          "5",
+    "doc_cost_credits":          "1",
+    "preview_watermark_enabled": "true",
+    "preview_watermark_text":    "PREVIEW - DocAuto",
+    "similarity_auto_reuse":     "95",
+    "similarity_ask_user":       "75",
+    "max_upload_mb":             "20",
+    "upi_id":                    "docauto@upi",
+}

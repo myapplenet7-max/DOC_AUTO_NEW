@@ -390,3 +390,61 @@ def list_documents(
     return db.query(models.Document).filter(
         models.Document.user_id == current_user.id
     ).order_by(models.Document.created_at.desc()).all()
+
+
+@router.delete("/{doc_id}")
+def delete_document(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    doc = db.query(models.Document).filter(
+        models.Document.id == doc_id, models.Document.user_id == current_user.id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    db.delete(doc); db.commit()
+    return {"ok": True}
+
+
+@router.post("/{doc_id}/create-template")
+def auto_create_template(
+    doc_id: int,
+    body: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Auto-create a template from an already-generated document, adding it to the library."""
+    doc = db.query(models.Document).filter(
+        models.Document.id == doc_id, models.Document.user_id == current_user.id
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not doc.template_content:
+        raise HTTPException(status_code=400, detail="No template content. Complete placeholder review first.")
+
+    from services.template_service import build_field_schema
+    name     = body.get("name", f"{doc.original_filename} Template")
+    category = body.get("category", doc.doc_type or "Custom Templates")
+    desc     = body.get("description", "")
+
+    # Avoid duplicates: check if a template from this doc already exists
+    existing = db.query(models.Template).filter(
+        models.Template.source_doc_id == doc_id,
+        models.Template.user_id == current_user.id,
+    ).first()
+    if existing:
+        return {"template_id": existing.id, "name": existing.name, "already_existed": True}
+
+    field_schema = build_field_schema(doc.template_content)
+    tmpl = models.Template(
+        user_id=current_user.id,
+        name=name,
+        category=category,
+        description=desc,
+        template_content=doc.template_content,
+        field_schema=field_schema,
+        source_doc_id=doc_id,
+    )
+    db.add(tmpl); db.commit(); db.refresh(tmpl)
+    return {"template_id": tmpl.id, "name": tmpl.name, "already_existed": False}
