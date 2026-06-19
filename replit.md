@@ -50,8 +50,9 @@ Upload PDFs/images → OCR (Telugu/English) → editable field extraction → DO
 - **Never use python-jose or passlib** — blocked by Replit package firewall (HTTP 403)
 - Use `import jwt` (PyJWT) and `import bcrypt` directly
 - api-server artifact.toml dev command: `cd /home/runner/workspace/backend && uvicorn main:app --host 0.0.0.0 --port 8080 --reload`
-- Admin user: first user must be manually promoted via SQL: `UPDATE users SET role='admin' WHERE id=1`
-- Default admin credentials: mobile `9999999999`, password `admin123`
+- Admin is **auto-created on startup** if none exists — no manual SQL needed
+- Default admin credentials: mobile `9999999999`, password `Admin@123`
+- Override via env vars: `ADMIN_MOBILE`, `ADMIN_PASSWORD`, `ADMIN_NAME`
 
 ## User preferences
 
