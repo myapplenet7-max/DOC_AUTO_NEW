@@ -559,11 +559,11 @@ function ComparisonPanel({ docId, token, showOutput = false, children }) {
 
 // ── Interactive text view with text-selection → variable conversion ──────────
 function InteractiveDocText({ rawText, placeholders, onAddPlaceholder }) {
-  const containerRef = React.useRef(null);
-  const [selInfo, setSelInfo] = React.useState(null); // { text, top, left }
-  const [varName, setVarName] = React.useState("");
-  const [showForm, setShowForm] = React.useState(false);
-  const inputRef = React.useRef(null);
+  const containerRef = useRef(null);
+  const [selInfo, setSelInfo] = useState(null); // { text, top, left }
+  const [varName, setVarName] = useState("");
+  const [showForm, setShowForm] = useState(false);
+  const inputRef = useRef(null);
 
   // Build the "template text" view: replace approved values with {{TOKEN}} marks
   const buildDisplayHtml = () => {
@@ -631,7 +631,7 @@ function InteractiveDocText({ rawText, placeholders, onAddPlaceholder }) {
     window.getSelection()?.removeAllRanges();
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (showForm && inputRef.current) inputRef.current.focus();
   }, [showForm]);
 
