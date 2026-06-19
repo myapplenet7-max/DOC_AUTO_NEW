@@ -723,14 +723,29 @@ function UploadPage({ setPage }) {
   const [manualKey, setManualKey] = useState("");
   const [inputMode, setInputMode] = useState<"file" | "text">("file");
   const [pastedText, setPastedText] = useState("");
+  const [showPreprocess, setShowPreprocess] = useState(false);
+  const [preprocessParams, setPreprocessParams] = useState({
+    brightness: 0.1,
+    contrast: 2.0,
+    white_point: 0.85,
+    black_point: 0.0,
+    sharpness: 5,
+    binarize_threshold: 0.5,
+  });
 
   const STEPS = ["Upload", "Review Variables", "Fill & Generate", "Download"];
+
+  const isImageFile = (f) => f && /\.(jpe?g|png|webp|tiff?|bmp)$/i.test(f.name);
 
   const upload = async () => {
     if (!file) return;
     setError(""); setLoading(true);
     try {
-      const fd = new FormData(); fd.append("file", file);
+      const fd = new FormData();
+      fd.append("file", file);
+      if (isImageFile(file)) {
+        fd.append("preprocess_params", JSON.stringify(preprocessParams));
+      }
       const data = await apiFetch("/documents/upload", { method: "POST", body: fd }, token);
       setResult(data);
       const phData = await apiFetch(`/documents/${data.id}/placeholders`, {}, token);
@@ -937,6 +952,49 @@ function UploadPage({ setPage }) {
                   </div>
                 )}
               </div>
+              {/* Preprocessing sliders — image files only */}
+              {isImageFile(file) && (
+                <div className="mt-4 rounded-2xl border border-indigo-100 bg-indigo-50/50 overflow-hidden">
+                  <button
+                    onClick={() => setShowPreprocess(p => !p)}
+                    className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-indigo-800 hover:bg-indigo-100/50 transition-colors"
+                  >
+                    <span className="flex items-center gap-2">🎛️ Image Preprocessing</span>
+                    <span className="text-xs text-indigo-400">{showPreprocess ? "▲ Hide" : "▼ Adjust"}</span>
+                  </button>
+                  {showPreprocess && (
+                    <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {[
+                        { key: "brightness",          label: "Brightness",    min: -0.5,  max: 0.5,  step: 0.05  },
+                        { key: "contrast",            label: "Contrast",      min: 0.5,   max: 4.0,  step: 0.1   },
+                        { key: "white_point",         label: "White Point",   min: 0.5,   max: 0.99, step: 0.01  },
+                        { key: "black_point",         label: "Black Point",   min: 0.0,   max: 0.3,  step: 0.01  },
+                        { key: "sharpness",           label: "Sharpness",     min: 3,     max: 9,    step: 1     },
+                        { key: "binarize_threshold",  label: "Binarize",      min: 0.3,   max: 0.7,  step: 0.05  },
+                      ].map(({ key, label, min, max, step }) => (
+                        <div key={key}>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-semibold text-indigo-700">{label}</label>
+                            <span className="text-xs text-indigo-500 tabular-nums">{Number(preprocessParams[key]).toFixed(step < 1 ? 2 : 0)}</span>
+                          </div>
+                          <input
+                            type="range" min={min} max={max} step={step}
+                            value={preprocessParams[key]}
+                            onChange={e => setPreprocessParams(p => ({ ...p, [key]: parseFloat(e.target.value) }))}
+                            className="w-full h-1.5 rounded-full accent-indigo-600 cursor-pointer"
+                          />
+                        </div>
+                      ))}
+                      <div className="sm:col-span-2">
+                        <button
+                          onClick={() => setPreprocessParams({ brightness: 0.1, contrast: 2.0, white_point: 0.85, black_point: 0.0, sharpness: 5, binarize_threshold: 0.5 })}
+                          className="text-xs text-indigo-500 hover:text-indigo-700 underline"
+                        >Reset to defaults</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               {error && <Alert type="error" className="mt-4">{error}</Alert>}
               <Button loading={loading} disabled={!file || (!isAdmin && (user?.credits || 0) === 0)} onClick={upload} className="mt-4 w-full justify-center" size="lg">
                 <Icons.Ai />{isAdmin ? "Extract & Detect Variables (Free)" : "Extract & Detect Variables (1 credit)"}

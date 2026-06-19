@@ -666,22 +666,47 @@ export default function AdminPage({ token }) {
 
       {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-2 gap-3 mb-6 sm:grid-cols-3 lg:grid-cols-6">
-          {[
-            { label: "Users",     value: stats.total_users,      icon: "👤", color: "text-blue-700" },
-            { label: "Documents", value: stats.total_documents,  icon: "📄", color: "text-slate-700" },
-            { label: "Templates", value: stats.total_templates,  icon: "📚", color: "text-purple-700" },
-            { label: "Resumes",   value: stats.total_resumes,    icon: "📝", color: "text-rose-700" },
-            { label: "Pending",   value: stats.pending_payments, icon: "⏳", color: "text-amber-700" },
-            { label: "Revenue",   value: `₹${stats.total_revenue}`, icon: "💰", color: "text-emerald-700" },
-          ].map(s => (
-            <Card key={s.label} className="p-3 text-center">
-              <div className="text-xl mb-0.5">{s.icon}</div>
-              <div className={`text-lg font-black ${s.color}`}>{s.value}</div>
-              <div className="text-xs text-slate-500">{s.label}</div>
-            </Card>
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 gap-3 mb-3 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              { label: "Users",     value: stats.total_users,      icon: "👤", color: "text-blue-700" },
+              { label: "Documents", value: stats.total_documents,  icon: "📄", color: "text-slate-700" },
+              { label: "Templates", value: stats.total_templates,  icon: "📚", color: "text-purple-700" },
+              { label: "Resumes",   value: stats.total_resumes,    icon: "📝", color: "text-rose-700" },
+              { label: "Pending",   value: stats.pending_payments, icon: "⏳", color: "text-amber-700" },
+              { label: "Revenue",   value: `₹${stats.total_revenue}`, icon: "💰", color: "text-emerald-700" },
+            ].map(s => (
+              <Card key={s.label} className="p-3 text-center">
+                <div className="text-xl mb-0.5">{s.icon}</div>
+                <div className={`text-lg font-black ${s.color}`}>{s.value}</div>
+                <div className="text-xs text-slate-500">{s.label}</div>
+              </Card>
+            ))}
+          </div>
+          {/* OCR Training data collector */}
+          <Card className={`mb-6 px-4 py-3 flex items-center gap-3 ${stats.training_ready ? "border-emerald-300 bg-emerald-50" : "border-slate-100"}`}>
+            <span className="text-2xl">{stats.training_ready ? "🤖" : "🧠"}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-slate-800">OCR Training Data</span>
+                {stats.training_ready
+                  ? <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-600 text-white">✓ Ready to train</span>
+                  : <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">Collecting…</span>}
+              </div>
+              <div className="flex items-center gap-2 mt-1">
+                <div className="flex-1 bg-slate-200 rounded-full h-1.5 max-w-xs">
+                  <div
+                    className={`h-1.5 rounded-full transition-all ${stats.training_ready ? "bg-emerald-500" : "bg-indigo-500"}`}
+                    style={{ width: `${Math.min(100, (stats.training_data_count / stats.training_ready_threshold) * 100)}%` }}
+                  />
+                </div>
+                <span className="text-xs text-slate-500 whitespace-nowrap">
+                  {stats.training_data_count} / {stats.training_ready_threshold} pairs
+                </span>
+              </div>
+            </div>
+          </Card>
+        </>
       )}
 
       {/* Tabs */}

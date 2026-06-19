@@ -13,19 +13,21 @@ import os
 
 # ── Text extraction (unchanged) ──────────────────────────────────────────────
 
-def extract_text(file_path: str) -> str:
+def extract_text(file_path: str, preprocess_params: dict | None = None,
+                 document_id: int | None = None, db=None) -> str:
     ext = os.path.splitext(file_path)[1].lower()
     if ext == ".pdf":
         text = _extract_from_pdf(file_path)
         if text and text.strip():
             return text
-        return _extract_from_scanned_pdf(file_path)
+        return _extract_from_scanned_pdf(file_path, document_id=document_id, db=db)
     elif ext in (".docx", ".doc"):
         return _extract_from_docx(file_path)
     elif ext == ".odt":
         return _extract_from_odt(file_path)
     else:
-        return _extract_from_image(file_path)
+        return _extract_from_image(file_path, preprocess_params=preprocess_params,
+                                   document_id=document_id, db=db)
 
 
 def _extract_from_docx(file_path: str) -> str:
@@ -82,39 +84,73 @@ def _extract_odt_fallback(file_path: str) -> str:
         return f"ODT fallback error: {str(e)}"
 
 
-def _extract_from_image(file_path: str) -> str:
-    import logging
-    logger = logging.getLogger(__name__)
-    try:
-        from PIL import Image
-        img = Image.open(file_path)
-    except Exception as e:
-        logger.error("Failed to open image %s: %s", file_path, e)
-        return f"[Image open error: {e}]"
-
+def _ocr_pil_image(pil_image) -> str:
+    """Run Tesseract on a PIL image — Telugu+English → English → bare fallback."""
     try:
         import pytesseract
     except ImportError:
-        logger.warning("pytesseract not installed — OCR unavailable for image files")
         return "[OCR_UNAVAILABLE]"
-
     try:
         try:
-            return pytesseract.image_to_string(img, lang="tel+eng")
+            return pytesseract.image_to_string(pil_image, lang="tel+eng")
         except pytesseract.TesseractNotFoundError:
-            logger.warning("Tesseract binary not found — OCR unavailable. Install tesseract-ocr.")
             return "[OCR_UNAVAILABLE]"
         except Exception:
             try:
-                return pytesseract.image_to_string(img, lang="eng")
+                return pytesseract.image_to_string(pil_image, lang="eng")
             except pytesseract.TesseractNotFoundError:
-                logger.warning("Tesseract binary not found — OCR unavailable.")
                 return "[OCR_UNAVAILABLE]"
             except Exception:
-                return pytesseract.image_to_string(img)
+                return pytesseract.image_to_string(pil_image)
     except Exception as e:
-        logger.error("pytesseract error on %s: %s", file_path, e)
+        import logging
+        logging.getLogger(__name__).error("pytesseract error: %s", e)
         return "[OCR_UNAVAILABLE]"
+
+
+def _extract_from_image(file_path: str, preprocess_params: dict | None = None,
+                        document_id: int | None = None, db=None) -> str:
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        from services.image_preprocess import preprocess_image, image_hash
+        processed = preprocess_image(file_path, params=preprocess_params)
+        logger.info("Preprocessing applied to %s", file_path)
+    except Exception as e:
+        logger.warning("Preprocessing failed (%s) — falling back to raw image", e)
+        try:
+            from PIL import Image
+            processed = Image.open(file_path)
+        except Exception as e2:
+            logger.error("Failed to open image %s: %s", file_path, e2)
+            return f"[Image open error: {e2}]"
+
+    text = _ocr_pil_image(processed)
+
+    # Silently save training pair for future fine-tuning (data collection only)
+    if db is not None and text and text != "[OCR_UNAVAILABLE]":
+        try:
+            import json
+            from services.image_preprocess import image_hash as _hash
+            from models import OCRTrainingData
+            img_hash = _hash(file_path)
+            existing = db.query(OCRTrainingData).filter(
+                OCRTrainingData.image_hash == img_hash
+            ).first()
+            if not existing:
+                pair = OCRTrainingData(
+                    document_id=document_id,
+                    image_hash=img_hash,
+                    preprocessing_params=json.dumps(preprocess_params or {}),
+                    ocr_output_text=text[:4000],
+                )
+                db.add(pair)
+                db.commit()
+        except Exception as e:
+            logger.debug("Training pair save skipped: %s", e)
+
+    return text
 
 
 def _extract_from_pdf(file_path: str) -> str:
@@ -131,27 +167,21 @@ def _extract_from_pdf(file_path: str) -> str:
         return f"PDF extraction error: {str(e)}"
 
 
-def _extract_from_scanned_pdf(file_path: str) -> str:
+def _extract_from_scanned_pdf(file_path: str, document_id: int | None = None,
+                              db=None) -> str:
     try:
         from pdf2image import convert_from_path
         pages = convert_from_path(file_path, dpi=300)
         text_parts = []
         for page_image in pages:
-            text_parts.append(_fallback_image_text_from_pil(page_image))
+            text_parts.append(_ocr_pil_image(page_image))
         return "\n".join(text_parts)
     except Exception as e:
         return f"Scanned PDF OCR error: {str(e)}"
 
 
 def _fallback_image_text_from_pil(pil_image):
-    try:
-        import pytesseract
-        try:
-            return pytesseract.image_to_string(pil_image, lang="tel+eng")
-        except Exception:
-            return pytesseract.image_to_string(pil_image, lang="eng")
-    except Exception:
-        return ""
+    return _ocr_pil_image(pil_image)
 
 
 # ── Document type detection ──────────────────────────────────────────────────

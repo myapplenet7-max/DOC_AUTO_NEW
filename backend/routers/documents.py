@@ -1,5 +1,5 @@
 import os, json, shutil, base64
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query, Body
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 from database import get_db
@@ -74,6 +74,7 @@ async def create_document_from_text(
 @router.post("/upload", response_model=schemas.DocumentOut)
 async def upload_document(
     file: UploadFile = File(...),
+    preprocess_params: str = Form(None),   # JSON-encoded dict, optional
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -87,7 +88,14 @@ async def upload_document(
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    raw_text = extract_text(file_path)
+    pp = None
+    if preprocess_params:
+        try:
+            pp = json.loads(preprocess_params)
+        except Exception:
+            pp = None
+
+    raw_text = extract_text(file_path, preprocess_params=pp, document_id=None, db=db)
     fields   = detect_fields(raw_text)
 
     if not is_admin:

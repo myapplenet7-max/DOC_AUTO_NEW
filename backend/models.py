@@ -145,6 +145,22 @@ class AppSettings(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class OCRTrainingData(Base):
+    """
+    Silent accumulation of preprocessing→OCR pairs for future model fine-tuning.
+    No training runs automatically — data collection only.
+    """
+    __tablename__ = "ocr_training_data"
+
+    id                     = Column(Integer, primary_key=True, index=True)
+    document_id            = Column(Integer, ForeignKey("documents.id"), nullable=True)
+    image_hash             = Column(String, nullable=False, index=True)
+    preprocessing_params   = Column(Text, nullable=True)   # JSON
+    ocr_output_text        = Column(Text, nullable=True)
+    user_corrections       = Column(Text, nullable=True)   # JSON, populated later
+    created_at             = Column(DateTime(timezone=True), server_default=func.now())
+
+
 DEFAULT_SETTINGS = {
     "starting_credits":          "5",
     "doc_cost_credits":          "1",

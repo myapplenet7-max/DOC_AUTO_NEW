@@ -165,6 +165,8 @@ def toggle_user_active(
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
+TRAINING_READY_THRESHOLD = 500
+
 @router.get("/stats")
 def stats(db: Session = Depends(get_db), _=Depends(require_admin)):
     total_users  = db.query(models.User).count()
@@ -175,13 +177,23 @@ def stats(db: Session = Depends(get_db), _=Depends(require_admin)):
     revenue_rows = db.query(models.Payment).filter(
         models.Payment.status == models.PaymentStatus.approved
     ).with_entities(models.Payment.amount).all()
+
+    training_count = 0
+    try:
+        training_count = db.query(models.OCRTrainingData).count()
+    except Exception:
+        pass
+
     return {
-        "total_users":     total_users,
-        "total_documents": total_docs,
-        "total_templates": total_tmpls,
-        "total_resumes":   total_resumes,
-        "pending_payments": pending,
-        "total_revenue":   sum(r[0] for r in revenue_rows),
+        "total_users":        total_users,
+        "total_documents":    total_docs,
+        "total_templates":    total_tmpls,
+        "total_resumes":      total_resumes,
+        "pending_payments":   pending,
+        "total_revenue":      sum(r[0] for r in revenue_rows),
+        "training_data_count":    training_count,
+        "training_ready_threshold": TRAINING_READY_THRESHOLD,
+        "training_ready":     training_count >= TRAINING_READY_THRESHOLD,
     }
 
 
