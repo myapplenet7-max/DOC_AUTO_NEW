@@ -227,6 +227,8 @@ function DocumentsTab({ token }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [testRunning, setTestRunning] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -235,6 +237,17 @@ function DocumentsTab({ token }) {
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  const runTestGenerate = async () => {
+    setTestRunning(true); setTestResult(null);
+    try {
+      const res = await apiFetch("/admin/test-generate", { method: "POST" }, token);
+      setTestResult(res);
+    } catch (e) {
+      setTestResult({ ok: false, steps: [], error: e.message });
+    }
+    setTestRunning(false);
+  };
 
   const filtered = docs.filter(d =>
     !search ||
@@ -247,6 +260,42 @@ function DocumentsTab({ token }) {
 
   return (
     <div>
+      {/* Test Document Generation */}
+      <Card className="mb-5 p-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <div className="font-bold text-slate-800 text-sm">🧪 Generate Test Document</div>
+            <div className="text-xs text-slate-500 mt-0.5">Verify the document generation pipeline with sample data (no credits used)</div>
+          </div>
+          <div className="flex items-center gap-3">
+            {testResult?.ok && (
+              <a href={`${API}/admin/test-generate/download?token=${token}`}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-all"
+                download>
+                ⬇ Download Test DOCX
+              </a>
+            )}
+            <button onClick={runTestGenerate} disabled={testRunning}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-all">
+              {testRunning ? <><Spinner /> Running…</> : "▶ Run Test"}
+            </button>
+          </div>
+        </div>
+        {testResult && (
+          <div className={`mt-3 rounded-xl border p-3 text-xs ${testResult.ok ? "bg-emerald-50 border-emerald-200" : "bg-red-50 border-red-200"}`}>
+            <div className={`font-bold mb-2 ${testResult.ok ? "text-emerald-700" : "text-red-700"}`}>
+              {testResult.ok ? "✅ Pipeline OK" : "❌ Pipeline Failed"}
+            </div>
+            <ul className="space-y-0.5">
+              {(testResult.steps || []).map((s, i) => (
+                <li key={i} className="text-slate-600 font-mono">{s}</li>
+              ))}
+              {testResult.error && <li className="text-red-600 font-mono">Error: {testResult.error}</li>}
+            </ul>
+          </div>
+        )}
+      </Card>
+
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <p className="text-sm text-slate-500">{docs.length} total documents across all users</p>
         <input value={search} onChange={e => setSearch(e.target.value)}

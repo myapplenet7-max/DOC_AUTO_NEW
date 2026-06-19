@@ -486,184 +486,6 @@ function Dashboard({ setPage }) {
   );
 }
 
-// ── Preprocess Preview + Region Selector ─────────────────────────────────────
-function PreprocessPreview({ file, params, onRegionChange }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imgRef    = useRef<HTMLImageElement | null>(null);
-  const dragRef   = useRef<{ x: number; y: number } | null>(null);
-  const regionRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
-  const [region, setRegion] = useState<{ x:number;y:number;w:number;h:number }|null>(null);
-  const [showOrig, setShowOrig] = useState(false);
-
-  const drawCanvas = () => {
-    const canvas = canvasRef.current;
-    const img = imgRef.current;
-    if (!canvas || !img) return;
-    const maxW = canvas.parentElement?.clientWidth || 360;
-    const scale = Math.min(1, maxW / img.naturalWidth);
-    canvas.width  = Math.round(img.naturalWidth  * scale);
-    canvas.height = Math.round(img.naturalHeight * scale);
-    const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-    if (!showOrig) {
-      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const d = imgData.data;
-      const { brightness = 0.1, contrast = 2.0, white_point = 0.85,
-              black_point = 0.0, binarize_threshold = 0.5 } = params;
-
-      for (let i = 0; i < d.length; i += 4) {
-        let g = (d[i] * 0.299 + d[i+1] * 0.587 + d[i+2] * 0.114) / 255;
-        // Auto-levels clamp
-        g = Math.max(black_point, Math.min(1.0, g));
-        g = (g - black_point) / (1 - black_point + 1e-7);
-        // Contrast + brightness
-        g = Math.max(0, Math.min(1, (g - 0.5) * contrast + 0.5 + brightness));
-        // White-point whitening
-        if (g > white_point) g = 1.0;
-        // Binarize
-        g = g > binarize_threshold ? 1.0 : 0.0;
-        d[i] = d[i+1] = d[i+2] = Math.round(g * 255);
-        d[i+3] = 255;
-      }
-
-      // Extra brightening in selected region (lower local threshold)
-      const r = regionRef.current;
-      if (r && r.w > 0.01 && r.h > 0.01) {
-        const rx1 = Math.round(r.x * canvas.width);
-        const ry1 = Math.round(r.y * canvas.height);
-        const rx2 = Math.min(canvas.width,  Math.round((r.x + r.w) * canvas.width));
-        const ry2 = Math.min(canvas.height, Math.round((r.y + r.h) * canvas.height));
-        for (let row = ry1; row < ry2; row++) {
-          for (let col = rx1; col < rx2; col++) {
-            const idx = (row * canvas.width + col) * 4;
-            let g2 = d[idx] / 255;
-            // Lower threshold in shadow region → more pixels become white
-            g2 = g2 > binarize_threshold * 0.6 ? 1.0 : g2;
-            const v = Math.round(g2 * 255);
-            d[idx] = d[idx+1] = d[idx+2] = v;
-          }
-        }
-      }
-
-      ctx.putImageData(imgData, 0, 0);
-    }
-
-    // Draw selection rectangle
-    const reg = regionRef.current;
-    if (reg && reg.w > 0.01 && reg.h > 0.01) {
-      ctx.save();
-      ctx.strokeStyle = "#f59e0b";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 4]);
-      const rx = reg.x * canvas.width, ry = reg.y * canvas.height;
-      const rw = reg.w * canvas.width,  rh = reg.h * canvas.height;
-      ctx.strokeRect(rx, ry, rw, rh);
-      ctx.fillStyle = "rgba(251,191,36,0.18)";
-      ctx.fillRect(rx, ry, rw, rh);
-      ctx.restore();
-    }
-  };
-
-  // Load image on file change
-  useEffect(() => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      const im = new window.Image();
-      im.onload = () => { imgRef.current = im; drawCanvas(); };
-      im.src = e.target!.result as string;
-    };
-    reader.readAsDataURL(file);
-  }, [file]);
-
-  // Redraw when params or showOrig changes
-  useEffect(() => { drawCanvas(); }, [params, showOrig, region]);
-
-  const getPos = (e: any) => {
-    const canvas = canvasRef.current!;
-    const rect   = canvas.getBoundingClientRect();
-    const cx = (e.touches ? e.touches[0]?.clientX : e.clientX) ?? 0;
-    const cy = (e.touches ? e.touches[0]?.clientY : e.clientY) ?? 0;
-    return { x: (cx - rect.left) / rect.width, y: (cy - rect.top) / rect.height };
-  };
-
-  const onStart = (e: any) => {
-    e.preventDefault();
-    const pos = getPos(e);
-    dragRef.current = pos;
-    regionRef.current = null;
-    setRegion(null);
-    onRegionChange(null);
-  };
-
-  const onMove = (e: any) => {
-    if (!dragRef.current) return;
-    e.preventDefault();
-    const pos = getPos(e);
-    const d   = dragRef.current;
-    regionRef.current = {
-      x: Math.max(0, Math.min(d.x, pos.x)),
-      y: Math.max(0, Math.min(d.y, pos.y)),
-      w: Math.abs(pos.x - d.x),
-      h: Math.abs(pos.y - d.y),
-    };
-    drawCanvas();
-  };
-
-  const onEnd = (e: any) => {
-    if (!dragRef.current) return;
-    e.preventDefault();
-    dragRef.current = null;
-    const r = regionRef.current;
-    const confirmed = (r && r.w > 0.02 && r.h > 0.02) ? r : null;
-    regionRef.current = confirmed;
-    setRegion(confirmed);
-    onRegionChange(confirmed);
-    drawCanvas();
-  };
-
-  const clearRegion = () => {
-    regionRef.current = null;
-    setRegion(null);
-    onRegionChange(null);
-    drawCanvas();
-  };
-
-  return (
-    <div className="mt-4 rounded-2xl border border-slate-200 bg-white overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 bg-slate-50">
-        <span className="text-xs font-semibold text-slate-700">👁 Live Preview</span>
-        <div className="flex items-center gap-3">
-          {region && (
-            <button onClick={clearRegion}
-              className="text-xs text-amber-600 hover:text-amber-800 font-semibold">
-              ✕ Clear region
-            </button>
-          )}
-          <button onClick={() => setShowOrig(s => !s)}
-            className="text-xs font-semibold text-indigo-600 hover:text-indigo-800">
-            {showOrig ? "Show processed ›" : "‹ Show original"}
-          </button>
-        </div>
-      </div>
-      <div className="p-3 flex flex-col items-center">
-        <canvas
-          ref={canvasRef}
-          className="rounded-lg max-w-full border border-slate-100 cursor-crosshair touch-none select-none"
-          onMouseDown={onStart} onMouseMove={onMove} onMouseUp={onEnd} onMouseLeave={onEnd}
-          onTouchStart={onStart} onTouchMove={onMove} onTouchEnd={onEnd}
-        />
-        <p className="text-xs text-slate-400 mt-2 text-center leading-relaxed">
-          {region
-            ? "🟡 Shadow region selected — will be extra-brightened during OCR"
-            : "Drag over any dark shadow area to select it for targeted brightening"}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 // ── Upload Page (multi-step) ─────────────────────────────────────────────────
 const FIELD_LABELS = {
   full_name:           "Full Name",
@@ -929,20 +751,7 @@ function UploadPage({ setPage }) {
   const [manualKey, setManualKey] = useState("");
   const [inputMode, setInputMode] = useState<"file" | "text">("file");
   const [pastedText, setPastedText] = useState("");
-  const [showPreprocess, setShowPreprocess] = useState(false);
-  const [preprocessParams, setPreprocessParams] = useState({
-    brightness: 0.1,
-    contrast: 2.0,
-    white_point: 0.85,
-    black_point: 0.0,
-    sharpness: 5,
-    binarize_threshold: 0.5,
-  });
-  const [brightenRegion, setBrightenRegion] = useState<{x:number;y:number;w:number;h:number}|null>(null);
-
   const STEPS = ["Upload", "Review Variables", "Fill & Generate", "Download"];
-
-  const isImageFile = (f) => f && /\.(jpe?g|png|webp|tiff?|bmp)$/i.test(f.name);
 
   const upload = async () => {
     if (!file) return;
@@ -950,11 +759,6 @@ function UploadPage({ setPage }) {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      if (isImageFile(file)) {
-        const pp = { ...preprocessParams };
-        if (brightenRegion) pp["brighten_region"] = brightenRegion;
-        fd.append("preprocess_params", JSON.stringify(pp));
-      }
       const data = await apiFetch("/documents/upload", { method: "POST", body: fd }, token);
       setResult(data);
       const phData = await apiFetch(`/documents/${data.id}/placeholders`, {}, token);
@@ -963,9 +767,6 @@ function UploadPage({ setPage }) {
       setRawText(extractedRaw);
       setDocType(phData.doc_type || null);
       setTemplateName(file.name.replace(/\.[^.]+$/, ""));
-      if (extractedRaw === "[OCR_UNAVAILABLE]") {
-        setError("OCR couldn't extract text from this image. Try adjusting the preprocessing sliders (increase Contrast, lower Binarize threshold) or use the 'Paste Text' tab to enter text manually.");
-      }
       await refreshUser();
       setStep(1);
     } catch (e) { setError(e.message); }
@@ -1082,8 +883,7 @@ function UploadPage({ setPage }) {
     setPlaceholders([]); setRawText(""); setDocType(null);
     setGenerated(false); setTemplateSaved(false); setError("");
     setShowSaveModal(false); setHasFormatTemplate(false);
-    setScanMsg(""); setShowManualAdd(false);
-    setPastedText(""); setInputMode("file");
+    setScanMsg(""); setShowManualAdd(false); setPastedText(""); setInputMode("file");
   };
 
   const togglePlaceholder = (idx) => {
@@ -1143,7 +943,7 @@ function UploadPage({ setPage }) {
                 onClick={() => document.getElementById("fileInput").click()}
                 className={`border-2 border-dashed rounded-2xl p-10 lg:p-14 text-center cursor-pointer transition-all ${dragging ? "border-indigo-400 bg-indigo-50" : "border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50"}`}
               >
-                <input id="fileInput" type="file" accept=".pdf,.jpg,.jpeg,.png,.docx,.doc,.odt" className="hidden" onChange={e => setFile(e.target.files[0])} />
+                <input id="fileInput" type="file" accept=".txt,.docx" className="hidden" onChange={e => setFile(e.target.files[0])} />
                 <div className="text-4xl mb-3">📎</div>
                 {file ? (
                   <div>
@@ -1154,68 +954,11 @@ function UploadPage({ setPage }) {
                 ) : (
                   <div>
                     <div className="font-semibold text-slate-700">Drop file here or tap to browse</div>
-                    <div className="text-xs text-slate-400 mt-1">PDF · DOCX · ODT · JPG · PNG · Scanned documents</div>
+                    <div className="text-xs text-slate-400 mt-1">TXT · DOCX</div>
                     <div className="text-xs text-indigo-500 mt-2 font-medium">Telugu &amp; English · Format preserved</div>
                   </div>
                 )}
               </div>
-              {/* Preprocessing sliders + live preview — image files only */}
-              {isImageFile(file) && (
-                <>
-                  <div className="mt-4 rounded-2xl border border-indigo-100 bg-indigo-50/50 overflow-hidden">
-                    <button
-                      onClick={() => setShowPreprocess(p => !p)}
-                      className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-indigo-800 hover:bg-indigo-100/50 transition-colors"
-                    >
-                      <span className="flex items-center gap-2">🎛️ Image Preprocessing</span>
-                      <span className="text-xs text-indigo-400">{showPreprocess ? "▲ Hide" : "▼ Adjust"}</span>
-                    </button>
-                    {showPreprocess && (
-                      <div className="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {[
-                          { key: "brightness",          label: "Brightness",    min: -0.5,  max: 0.5,  step: 0.05  },
-                          { key: "contrast",            label: "Contrast",      min: 0.5,   max: 4.0,  step: 0.1   },
-                          { key: "white_point",         label: "White Point",   min: 0.5,   max: 0.99, step: 0.01  },
-                          { key: "black_point",         label: "Black Point",   min: 0.0,   max: 0.3,  step: 0.01  },
-                          { key: "sharpness",           label: "Sharpness",     min: 3,     max: 9,    step: 1     },
-                          { key: "binarize_threshold",  label: "Binarize",      min: 0.3,   max: 0.7,  step: 0.05  },
-                        ].map(({ key, label, min, max, step }) => (
-                          <div key={key}>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="text-xs font-semibold text-indigo-700">{label}</label>
-                              <span className="text-xs text-indigo-500 tabular-nums">{Number(preprocessParams[key]).toFixed(step < 1 ? 2 : 0)}</span>
-                            </div>
-                            <input
-                              type="range" min={min} max={max} step={step}
-                              value={preprocessParams[key]}
-                              onChange={e => setPreprocessParams(p => ({ ...p, [key]: parseFloat(e.target.value) }))}
-                              className="w-full h-1.5 rounded-full accent-indigo-600 cursor-pointer"
-                            />
-                          </div>
-                        ))}
-                        <div className="sm:col-span-2">
-                          <button
-                            onClick={() => setPreprocessParams({ brightness: 0.1, contrast: 2.0, white_point: 0.85, black_point: 0.0, sharpness: 5, binarize_threshold: 0.5 })}
-                            className="text-xs text-indigo-500 hover:text-indigo-700 underline"
-                          >Reset to defaults</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  {/* Live canvas preview with region selector */}
-                  <PreprocessPreview
-                    file={file}
-                    params={preprocessParams}
-                    onRegionChange={setBrightenRegion}
-                  />
-                  {brightenRegion && (
-                    <div className="mt-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
-                      <span>🟡</span>
-                      <span>Shadow region selected — extra brightening will be applied during OCR processing.</span>
-                    </div>
-                  )}
-                </>
-              )}
               {error && <Alert type="error" className="mt-4">{error}</Alert>}
               <Button loading={loading} disabled={!file || (!isAdmin && (user?.credits || 0) === 0)} onClick={upload} className="mt-4 w-full justify-center" size="lg">
                 <Icons.Ai />{isAdmin ? "Extract & Detect Variables (Free)" : "Extract & Detect Variables (1 credit)"}
@@ -1248,12 +991,18 @@ function UploadPage({ setPage }) {
               </Button>
               <div className="mt-3 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
                 <span className="text-amber-500 mt-0.5">💡</span>
-                <p className="text-xs text-amber-700">Use this tab when uploading an image (JPG/PNG) doesn't extract text — image OCR requires Tesseract which may not be available. Paste the text manually to proceed.</p>
+                <p className="text-xs text-amber-700">Use this tab to paste text directly from any source. DocAuto will detect variables and generate a DOCX output.</p>
               </div>
             </>
           )}
 
-          <div className="mt-5 grid grid-cols-3 gap-3 text-center">
+          <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500">
+            <span className="font-semibold text-slate-700">Supported:</span> TXT (.txt) · Word (.docx)
+            &nbsp;·&nbsp;
+            <span className="font-semibold text-slate-700">Not supported:</span> JPG · JPEG · PNG · PDF · Scanned images
+          </div>
+
+          <div className="mt-4 grid grid-cols-3 gap-3 text-center">
             {[
               ["🔒", "Format Preserved", "DOCX layout kept 95–100% intact"],
               ["🤖", "Type-Aware AI", "Detects doc type, extracts only relevant fields"],

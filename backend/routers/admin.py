@@ -54,6 +54,84 @@ def update_settings(data: dict, db: Session = Depends(get_db), _=Depends(require
     return {"updated": updated}
 
 
+# ── Test Document Generation ───────────────────────────────────────────────────
+
+@router.post("/test-generate")
+def test_generate_document(db: Session = Depends(get_db), _=Depends(require_admin)):
+    """Generate a sample document using a built-in template to verify the pipeline."""
+    import json, tempfile
+    from services.ocr_service import detect_fields
+    from services.docx_service import generate_docx
+
+    sample_text = (
+        "I, RAVI KUMAR, S/O NARAYANA RAO, aged 35 years, residing at H.No. 5-123, "
+        "MG Road, Vijayawada, Krishna District, Andhra Pradesh - 520001, do hereby "
+        "solemnly affirm and sincerely state as follows:\n\n"
+        "That my date of birth is 15-08-1988 as per school records.\n"
+        "My Aadhaar Number is 1234 5678 9012.\n"
+        "My PAN Number is ABCDE1234F.\n"
+        "Mobile: 9876543210. Email: ravi.kumar@example.com.\n\n"
+        "Solemnly affirmed at Vijayawada on this 19th day of June, 2026."
+    )
+
+    sample_fields = {
+        "full_name": "RAVI KUMAR",
+        "father_name": "NARAYANA RAO",
+        "age": "35",
+        "address": "H.No. 5-123, MG Road, Vijayawada, Krishna District, Andhra Pradesh - 520001",
+        "date_of_birth": "15-08-1988",
+        "aadhar_number": "1234 5678 9012",
+        "pan_number": "ABCDE1234F",
+        "mobile": "9876543210",
+        "email": "ravi.kumar@example.com",
+        "place": "Vijayawada",
+        "date": "19-06-2026",
+        "raw_text": sample_text,
+    }
+
+    output_path = os.path.join(
+        os.environ.get("OUTPUT_DIR", "/tmp/docauto_outputs"),
+        "admin_test_document.docx"
+    )
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    steps = []
+    try:
+        steps.append("✓ Sample data prepared")
+        generate_docx(sample_fields, output_path)
+        steps.append("✓ DOCX generated via docx_service")
+        if not os.path.exists(output_path):
+            return {"ok": False, "steps": steps, "error": "Output file was not created"}
+        size = os.path.getsize(output_path)
+        steps.append(f"✓ File saved ({size} bytes)")
+        steps.append("✓ Pipeline OK — download available at /api/admin/test-generate/download")
+        return {"ok": True, "steps": steps, "output_path": output_path, "file_size_bytes": size}
+    except Exception as e:
+        steps.append(f"✗ FAILED: {e}")
+        logger.exception("Test document generation failed: %s", e)
+        return {"ok": False, "steps": steps, "error": str(e)}
+
+
+@router.get("/test-generate/download")
+def download_test_document(token: str = Query(...), db: Session = Depends(get_db)):
+    """Download the last test-generated document."""
+    from fastapi.responses import FileResponse
+    user = get_user_from_token_string(token, db)
+    if user.role != models.UserRole.admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    output_path = os.path.join(
+        os.environ.get("OUTPUT_DIR", "/tmp/docauto_outputs"),
+        "admin_test_document.docx"
+    )
+    if not os.path.exists(output_path):
+        raise HTTPException(status_code=404, detail="No test document yet. Run test first.")
+    return FileResponse(
+        output_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename="test_document.docx",
+    )
+
+
 # ── Payments ──────────────────────────────────────────────────────────────────
 
 @router.get("/payments/pending", response_model=list[schemas.PaymentOut])

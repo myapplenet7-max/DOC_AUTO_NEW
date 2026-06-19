@@ -30,6 +30,7 @@ router = APIRouter()
 
 DOCX_EXTS = {".docx", ".doc"}
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
+ALLOWED_UPLOAD_EXTS = {".txt", ".docx", ".doc"}
 
 
 def _ext(path: str) -> str:
@@ -87,6 +88,13 @@ async def upload_document(
     _logger = _log.getLogger("docauto.upload")
 
     safe_name = file.filename.replace(" ", "_")
+    upload_ext = os.path.splitext(safe_name)[1].lower()
+    if upload_ext not in ALLOWED_UPLOAD_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{upload_ext}'. Only TXT and DOCX files are accepted. JPG, JPEG, PNG, and PDF are not supported."
+        )
+
     file_path = os.path.join(UPLOAD_DIR, f"{current_user.id}_{safe_name}")
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)

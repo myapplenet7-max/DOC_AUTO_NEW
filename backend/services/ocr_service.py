@@ -16,18 +16,28 @@ import os
 def extract_text(file_path: str, preprocess_params: dict | None = None,
                  document_id: int | None = None, db=None) -> str:
     ext = os.path.splitext(file_path)[1].lower()
-    if ext == ".pdf":
-        text = _extract_from_pdf(file_path)
-        if text and text.strip():
-            return text
-        return _extract_from_scanned_pdf(file_path, document_id=document_id, db=db)
+    if ext == ".txt":
+        return _extract_from_txt(file_path)
     elif ext in (".docx", ".doc"):
         return _extract_from_docx(file_path)
     elif ext == ".odt":
         return _extract_from_odt(file_path)
+    elif ext == ".pdf":
+        text = _extract_from_pdf(file_path)
+        if text and text.strip():
+            return text
+        return _extract_from_scanned_pdf(file_path, document_id=document_id, db=db)
     else:
         return _extract_from_image(file_path, preprocess_params=preprocess_params,
                                    document_id=document_id, db=db)
+
+
+def _extract_from_txt(file_path: str) -> str:
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except Exception as e:
+        return f"TXT extraction error: {str(e)}"
 
 
 def _extract_from_docx(file_path: str) -> str:
