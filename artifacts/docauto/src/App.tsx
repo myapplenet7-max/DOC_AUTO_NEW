@@ -1331,10 +1331,107 @@ const FIELD_TYPE_META = {
   text:     { icon: "🔤", color: "bg-slate-50 text-slate-600 border-slate-200",  badge: "Text" },
 };
 
+const MONTH_NAMES_EN = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+// Detects which field keys are date parts and returns a mapping of partType → [keys]
+function detectDateGroups(fields) {
+  const groups = { DAY: [], MONTH: [], YEAR: [], FULLDATE: [] };
+  fields.forEach(f => {
+    const k = f.key;
+    if (/\bDAY\b|^DD$|_DAY$|^DAY_|DAY\d/.test(k))            groups.DAY.push(k);
+    else if (/\bMONTH\b|^MM$|_MONTH$|^MONTH_|MONTH\d/.test(k)) groups.MONTH.push(k);
+    else if (/\bYEAR\b|^YYYY$|^YY$|_YEAR$|^YEAR_|YEAR\d/.test(k)) groups.YEAR.push(k);
+    else if (/\bDATE\b|_DATE$|^DATE_|DATE\d/.test(k))           groups.FULLDATE.push(k);
+  });
+  return groups;
+}
+
+function hasDateGroup(groups) {
+  return groups.DAY.length > 0 || groups.MONTH.length > 0 || groups.YEAR.length > 0 || groups.FULLDATE.length > 0;
+}
+
+// All keys managed by date auto-fill
+function dateGroupKeys(groups) {
+  return [...groups.DAY, ...groups.MONTH, ...groups.YEAR, ...groups.FULLDATE];
+}
+
+function applyDateToFields(dateStr, groups, setFillFields) {
+  if (!dateStr) return;
+  const [yyyy, mm, dd] = dateStr.split("-");
+  const monthName = MONTH_NAMES_EN[parseInt(mm, 10) - 1] || "";
+  const updates = {};
+  groups.DAY.forEach(k => { updates[k] = String(parseInt(dd, 10)); });           // "15"
+  groups.MONTH.forEach(k => { updates[k] = monthName; });                         // "July"
+  groups.YEAR.forEach(k => { updates[k] = yyyy; });                               // "2026"
+  groups.FULLDATE.forEach(k => { updates[k] = `${dd}/${mm}/${yyyy}`; });          // "15/07/2026"
+  setFillFields(prev => ({ ...prev, ...updates }));
+}
+
+function SmartDatePanel({ groups, fillFields, setFillFields }) {
+  const [pickerDate, setPickerDate] = useState("");
+  const affectedKeys = dateGroupKeys(groups);
+  const allAutoFilled = affectedKeys.length > 0 && affectedKeys.every(k => fillFields[k] && fillFields[k].trim());
+
+  const handleDateChange = (e) => {
+    const val = e.target.value;
+    setPickerDate(val);
+    if (val) applyDateToFields(val, groups, setFillFields);
+  };
+
+  const preview = useMemo(() => {
+    if (!pickerDate) return null;
+    const [yyyy, mm, dd] = pickerDate.split("-");
+    const month = MONTH_NAMES_EN[parseInt(mm, 10) - 1] || "";
+    return { dd: String(parseInt(dd, 10)), month, yyyy, full: `${dd}/${mm}/${yyyy}` };
+  }, [pickerDate]);
+
+  return (
+    <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-3 mb-1">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-base">📅</span>
+        <span className="text-xs font-bold text-blue-700 uppercase tracking-wider">Smart Date Auto-Fill</span>
+        {allAutoFilled && <span className="ml-auto text-xs font-bold text-emerald-600">✓ All date fields filled</span>}
+      </div>
+      <p className="text-xs text-blue-600 mb-2">
+        Pick a date once — it automatically fills{" "}
+        {[
+          groups.DAY.length > 0 && `Day (${groups.DAY.map(k=>`{{${k}}}`).join(", ")})`,
+          groups.MONTH.length > 0 && `Month (${groups.MONTH.map(k=>`{{${k}}}`).join(", ")})`,
+          groups.YEAR.length > 0 && `Year (${groups.YEAR.map(k=>`{{${k}}}`).join(", ")})`,
+          groups.FULLDATE.length > 0 && `Full date (${groups.FULLDATE.map(k=>`{{${k}}}`).join(", ")})`,
+        ].filter(Boolean).join(" · ")}
+      </p>
+      <div className="flex items-center gap-3 flex-wrap">
+        <input
+          type="date"
+          value={pickerDate}
+          onChange={handleDateChange}
+          className="px-3 py-2 rounded-lg border-2 border-blue-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white font-medium"
+        />
+        {preview && (
+          <div className="flex gap-2 flex-wrap">
+            {groups.DAY.length > 0 && (
+              <span className="bg-white border border-blue-200 rounded-lg px-2 py-1 text-xs font-bold text-blue-700">Day → <span className="text-slate-800">{preview.dd}</span></span>
+            )}
+            {groups.MONTH.length > 0 && (
+              <span className="bg-white border border-blue-200 rounded-lg px-2 py-1 text-xs font-bold text-blue-700">Month → <span className="text-slate-800">{preview.month}</span></span>
+            )}
+            {groups.YEAR.length > 0 && (
+              <span className="bg-white border border-blue-200 rounded-lg px-2 py-1 text-xs font-bold text-blue-700">Year → <span className="text-slate-800">{preview.yyyy}</span></span>
+            )}
+            {groups.FULLDATE.length > 0 && (
+              <span className="bg-white border border-blue-200 rounded-lg px-2 py-1 text-xs font-bold text-blue-700">Date → <span className="text-slate-800">{preview.full}</span></span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LivePreview({ templateContent, fillFields }) {
   const rendered = useMemo(() => {
     if (!templateContent) return "";
-    // Replace filled placeholders inline, leave unfilled as highlighted chips
     const escaped = templateContent.replace(/</g, "&lt;").replace(/>/g, "&gt;");
     return escaped.replace(/\{\{([A-Z0-9_]+)\}\}/g, (_, key) => {
       const val = fillFields[key];
@@ -1361,6 +1458,8 @@ function LivePreview({ templateContent, fillFields }) {
 
 function TemplateFillForm({ schema, fillFields, setFillFields, filling, filled, templateContent, onGenerate, onDownload, onReset }) {
   const fields = schema?.fields || [];
+  const dateGroups = useMemo(() => detectDateGroups(fields), [fields]);
+  const autoFilledKeys = useMemo(() => new Set(dateGroupKeys(dateGroups)), [dateGroups]);
   const filledCount = fields.filter(f => fillFields[f.key] && fillFields[f.key].trim()).length;
   const progress = fields.length > 0 ? Math.round((filledCount / fields.length) * 100) : 0;
   const allFilled = filledCount === fields.length;
@@ -1386,27 +1485,46 @@ function TemplateFillForm({ schema, fillFields, setFillFields, filling, filled, 
         />
       </div>
 
+      {/* Smart date auto-fill panel — shown when date-part placeholders exist */}
+      {hasDateGroup(dateGroups) && (
+        <SmartDatePanel groups={dateGroups} fillFields={fillFields} setFillFields={setFillFields} />
+      )}
+
       {/* Field cards */}
       <div className="space-y-2 max-h-[45vh] overflow-y-auto pr-1">
         {fields.map((f, idx) => {
           const meta = FIELD_TYPE_META[f.type] || FIELD_TYPE_META.text;
           const hasValue = fillFields[f.key] && fillFields[f.key].trim();
+          const isAutoDate = autoFilledKeys.has(f.key);
           return (
             <div
               key={f.key}
-              className={`border rounded-xl p-3 transition-all ${hasValue ? "border-emerald-200 bg-emerald-50/30" : "border-slate-200 bg-white"}`}
+              className={`border rounded-xl p-3 transition-all ${
+                hasValue
+                  ? isAutoDate
+                    ? "border-blue-200 bg-blue-50/40"
+                    : "border-emerald-200 bg-emerald-50/30"
+                  : "border-slate-200 bg-white"
+              }`}
             >
               <div className="flex items-center gap-2 mb-2">
                 <span className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-500 text-xs font-bold shrink-0">{idx + 1}</span>
                 <code className="flex-1 text-xs font-mono font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5">
                   {`{{${f.key}}}`}
                 </code>
-                <span className={`text-xs font-semibold border rounded px-1.5 py-0.5 ${meta.color}`}>
-                  {meta.icon} {meta.badge}
-                </span>
-                {hasValue && <span className="text-emerald-500 text-sm">✓</span>}
+                {isAutoDate ? (
+                  <span className="text-xs font-semibold border rounded px-1.5 py-0.5 bg-blue-50 text-blue-700 border-blue-200">📅 Auto-date</span>
+                ) : (
+                  <span className={`text-xs font-semibold border rounded px-1.5 py-0.5 ${meta.color}`}>
+                    {meta.icon} {meta.badge}
+                  </span>
+                )}
+                {hasValue && <span className={`text-sm ${isAutoDate ? "text-blue-500" : "text-emerald-500"}`}>✓</span>}
               </div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5">{f.label}{f.required && <span className="text-red-400 ml-0.5">*</span>}</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                {f.label}{f.required && <span className="text-red-400 ml-0.5">*</span>}
+                {isAutoDate && <span className="ml-2 text-blue-500 font-normal">(auto-filled from date picker above)</span>}
+              </label>
               {f.type === "textarea" ? (
                 <textarea
                   rows={2}
@@ -1414,6 +1532,14 @@ function TemplateFillForm({ schema, fillFields, setFillFields, filling, filled, 
                   onChange={e => setFillFields(prev => ({ ...prev, [f.key]: e.target.value }))}
                   placeholder={`Enter ${f.label.toLowerCase()}…`}
                   className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none bg-white"
+                />
+              ) : isAutoDate ? (
+                <input
+                  type="text"
+                  value={fillFields[f.key] || ""}
+                  onChange={e => setFillFields(prev => ({ ...prev, [f.key]: e.target.value }))}
+                  placeholder="Filled by date picker — or type to override"
+                  className="w-full px-3 py-2 rounded-lg border border-blue-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white text-slate-700"
                 />
               ) : (
                 <input
