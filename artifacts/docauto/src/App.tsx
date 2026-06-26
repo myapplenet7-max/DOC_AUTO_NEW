@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useEffect, createContext, useContext, useRef } from "react";
+import { useState, useEffect, createContext, useContext, useRef, useMemo } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import AdminPage from "./AdminPage";
 
@@ -1321,6 +1321,143 @@ function UploadPage({ setPage }) {
   );
 }
 
+// ── Template Fill Form Component ─────────────────────────────────────────────
+const FIELD_TYPE_META = {
+  date:     { icon: "📅", color: "bg-blue-50 text-blue-700 border-blue-200",    badge: "Date" },
+  tel:      { icon: "📱", color: "bg-green-50 text-green-700 border-green-200",  badge: "Phone" },
+  email:    { icon: "✉️",  color: "bg-purple-50 text-purple-700 border-purple-200", badge: "Email" },
+  currency: { icon: "₹",  color: "bg-amber-50 text-amber-700 border-amber-200",  badge: "Amount" },
+  textarea: { icon: "📝", color: "bg-orange-50 text-orange-700 border-orange-200", badge: "Text Area" },
+  text:     { icon: "🔤", color: "bg-slate-50 text-slate-600 border-slate-200",  badge: "Text" },
+};
+
+function LivePreview({ templateContent, fillFields }) {
+  const rendered = useMemo(() => {
+    if (!templateContent) return "";
+    // Replace filled placeholders inline, leave unfilled as highlighted chips
+    const escaped = templateContent.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return escaped.replace(/\{\{([A-Z0-9_]+)\}\}/g, (_, key) => {
+      const val = fillFields[key];
+      if (val && val.trim()) {
+        return `<span class="inline-block bg-emerald-100 text-emerald-800 border border-emerald-300 rounded px-1.5 py-0.5 font-semibold text-xs mx-0.5">${val.replace(/</g,"&lt;")}</span>`;
+      }
+      return `<span class="inline-block bg-amber-100 text-amber-700 border border-amber-300 rounded px-1.5 py-0.5 font-mono text-xs mx-0.5">{{${key}}}</span>`;
+    });
+  }, [templateContent, fillFields]);
+
+  return (
+    <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+      <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Live Preview</span>
+        <span className="text-xs text-slate-400">— filled values shown in green</span>
+      </div>
+      <div
+        className="p-4 text-xs text-slate-700 leading-relaxed overflow-y-auto max-h-52 whitespace-pre-wrap font-sans"
+        dangerouslySetInnerHTML={{ __html: rendered.substring(0, 2000) + (rendered.length > 2000 ? "…" : "") }}
+      />
+    </div>
+  );
+}
+
+function TemplateFillForm({ schema, fillFields, setFillFields, filling, filled, templateContent, onGenerate, onDownload, onReset }) {
+  const fields = schema?.fields || [];
+  const filledCount = fields.filter(f => fillFields[f.key] && fillFields[f.key].trim()).length;
+  const progress = fields.length > 0 ? Math.round((filledCount / fields.length) * 100) : 0;
+  const allFilled = filledCount === fields.length;
+
+  return (
+    <div className="space-y-4">
+      {/* Header with progress */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Fill Placeholders</span>
+          <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-0.5 rounded-full">{fields.length} field{fields.length !== 1 ? "s" : ""}</span>
+        </div>
+        <span className={`text-xs font-bold ${allFilled ? "text-emerald-600" : "text-amber-600"}`}>
+          {filledCount}/{fields.length} filled
+        </span>
+      </div>
+
+      {/* Progress bar */}
+      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+        <div
+          className={`h-2 rounded-full transition-all duration-300 ${allFilled ? "bg-emerald-500" : "bg-indigo-500"}`}
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+
+      {/* Field cards */}
+      <div className="space-y-2 max-h-[45vh] overflow-y-auto pr-1">
+        {fields.map((f, idx) => {
+          const meta = FIELD_TYPE_META[f.type] || FIELD_TYPE_META.text;
+          const hasValue = fillFields[f.key] && fillFields[f.key].trim();
+          return (
+            <div
+              key={f.key}
+              className={`border rounded-xl p-3 transition-all ${hasValue ? "border-emerald-200 bg-emerald-50/30" : "border-slate-200 bg-white"}`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-500 text-xs font-bold shrink-0">{idx + 1}</span>
+                <code className="flex-1 text-xs font-mono font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded px-1.5 py-0.5">
+                  {`{{${f.key}}}`}
+                </code>
+                <span className={`text-xs font-semibold border rounded px-1.5 py-0.5 ${meta.color}`}>
+                  {meta.icon} {meta.badge}
+                </span>
+                {hasValue && <span className="text-emerald-500 text-sm">✓</span>}
+              </div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">{f.label}{f.required && <span className="text-red-400 ml-0.5">*</span>}</label>
+              {f.type === "textarea" ? (
+                <textarea
+                  rows={2}
+                  value={fillFields[f.key] || ""}
+                  onChange={e => setFillFields(prev => ({ ...prev, [f.key]: e.target.value }))}
+                  placeholder={`Enter ${f.label.toLowerCase()}…`}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none bg-white"
+                />
+              ) : (
+                <input
+                  type={f.type === "date" ? "date" : f.type === "tel" ? "tel" : f.type === "email" ? "email" : "text"}
+                  value={fillFields[f.key] || ""}
+                  onChange={e => setFillFields(prev => ({ ...prev, [f.key]: e.target.value }))}
+                  placeholder={`Enter ${f.label.toLowerCase()}…`}
+                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Live preview */}
+      {templateContent && <LivePreview templateContent={templateContent} fillFields={fillFields} />}
+
+      {/* Action buttons */}
+      <div className="flex flex-wrap gap-3 pt-1 border-t border-slate-100">
+        {!filled ? (
+          <>
+            <Button loading={filling} onClick={onGenerate} variant="success" className={!allFilled ? "opacity-80" : ""}>
+              <Icons.File /> {allFilled ? "Generate Filled DOCX" : `Generate DOCX (${fields.length - filledCount} empty)`}
+            </Button>
+            {!allFilled && (
+              <span className="self-center text-xs text-amber-600">⚠ Empty fields will be marked in red</span>
+            )}
+          </>
+        ) : (
+          <>
+            <Button onClick={onDownload} variant="primary">
+              <Icons.Download /> Download Filled DOCX
+            </Button>
+            <Button variant="ghost" onClick={onReset}>
+              ✏️ Fill Again
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Template Library Page ────────────────────────────────────────────────────
 function TemplateLibraryPage({ setPage }) {
   const { token } = useAuth();
@@ -1655,51 +1792,17 @@ function TemplateLibraryPage({ setPage }) {
 
                   {/* Fill form */}
                   {fillSchema?.fields?.length > 0 ? (
-                    <div>
-                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">
-                        Fill Template — {fillSchema.fields.length} field{fillSchema.fields.length !== 1 ? "s" : ""}
-                      </div>
-                      <div className="space-y-2.5 mb-5 max-h-[40vh] overflow-y-auto pr-1">
-                        {fillSchema.fields.map(f => (
-                          <div key={f.key}>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">{f.label}</label>
-                            {f.type === "textarea" ? (
-                              <textarea
-                                rows={2}
-                                value={fillFields[f.key] || ""}
-                                onChange={e => setFillFields(prev => ({ ...prev, [f.key]: e.target.value }))}
-                                placeholder={`Enter ${f.label.toLowerCase()}`}
-                                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                              />
-                            ) : (
-                              <input
-                                type={f.type === "date" ? "date" : f.type === "tel" ? "tel" : "text"}
-                                value={fillFields[f.key] || ""}
-                                onChange={e => setFillFields(prev => ({ ...prev, [f.key]: e.target.value }))}
-                                placeholder={`Enter ${f.label.toLowerCase()}`}
-                                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                              />
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                      <div className="flex flex-wrap gap-3">
-                        {!filled ? (
-                          <Button loading={filling} onClick={fillAndDownload} variant="success">
-                            <Icons.File /> Generate Filled DOCX
-                          </Button>
-                        ) : (
-                          <>
-                            <Button onClick={() => window.open(`${API}/templates/${selected.id}/download-filled?token=${token}`, "_blank")} variant="primary">
-                              <Icons.Download /> Download Filled DOCX
-                            </Button>
-                            <Button variant="ghost" onClick={() => { setFilled(false); const init={}; (fillSchema?.fields||[]).forEach(f=>{init[f.key]="";}); setFillFields(init); }}>
-                              Fill Again
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </div>
+                    <TemplateFillForm
+                      schema={fillSchema}
+                      fillFields={fillFields}
+                      setFillFields={setFillFields}
+                      filling={filling}
+                      filled={filled}
+                      templateContent={selected.template_content}
+                      onGenerate={fillAndDownload}
+                      onDownload={() => window.open(`${API}/templates/${selected.id}/download-filled?token=${token}`, "_blank")}
+                      onReset={() => { setFilled(false); const init={}; (fillSchema?.fields||[]).forEach(f=>{init[f.key]="";}); setFillFields(init); }}
+                    />
                   ) : (
                     <div>
                       <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Template Preview</div>
