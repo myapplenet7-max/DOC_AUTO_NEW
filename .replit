@@ -3,7 +3,7 @@ modules = ["nodejs-20", "python-3.11", "web"]
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
-run = ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--app-dir", "/home/runner/workspace/backend"]
+run = ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000", "--app-dir", "/home/runner/workspace/backend"]
 build = ["pnpm", "--filter", "@workspace/docauto", "run", "build"]
 
 [deployment.postBuild]
